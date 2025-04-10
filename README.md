@@ -76,13 +76,13 @@ Die erforderlichen Bibliotheken sind:
 
 ## Verwendung
 
-1.  Führe das `grabber.py`-Skript aus, um Shop- und Produktdaten von der AntCheck-API abzurufen und zu speichern:
+1.  Führe das `grabber.py`-Skript aus (Am besten im Crontab festlegen, z.b. alle 6h), um Shop- und Produktdaten von der AntCheck-API abzurufen und zu speichern:
 
     ```
     python grabber.py
     ```
 
-2.  Starte den Discord-Bot:
+2.  Starte den Discord-Bot (Am besten im Crontab festlegen das beim restart das Skript in einer Screen-Session gestartet wird.):
 
     ```
     python bot.py
