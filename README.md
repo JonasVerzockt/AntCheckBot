@@ -61,7 +61,6 @@ os
 time
 discord
 sqlite3
-json
 logging
 asyncio
 
