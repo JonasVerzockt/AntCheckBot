@@ -5,7 +5,7 @@
 File: bot.py
 Author: Jonas Beier
 Date: 2025-04-11
-Version: 1.0
+Version: 1.1
 Description:
     Dieses Skript implementiert einen Discord-Bot mit verschiedenen Funktionen, 
     darunter Benachrichtigungen, Statistiken und Systemstatus. Es verwendet SQLite 
@@ -46,7 +46,7 @@ from datetime import timedelta
 def setup_logger():
     log_file = os.path.join(os.getcwd(), f"bot_log_{datetime.now().strftime('%Y%m%d')}.log")
     logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
 
     handler = RotatingFileHandler(log_file, maxBytes=1024*1024, backupCount=5, encoding='utf8')
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
