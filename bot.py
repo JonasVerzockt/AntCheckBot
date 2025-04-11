@@ -4,7 +4,7 @@ import sqlite3
 import json
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
 import asyncio
 
@@ -14,32 +14,29 @@ def setup_logger():
     logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)
 
-    # Erstelle einen RotatingFileHandler
     handler = RotatingFileHandler(log_file, maxBytes=1024*1024, backupCount=5, encoding='utf8')
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
     handler.setFormatter(formatter)
-
-    # Füge den Handler zum Logger hinzu
     logger.addHandler(handler)
 
-    # Füge auch einen StreamHandler hinzu, um in die Konsole zu schreiben
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
-# Bot-Konfiguration
-TOKEN = "DEINTOKEN"  # Ersetze durch deinen Bot-Token
-DATA_DIRECTORY = "PFAD"  # Ordner mit Produkt-JSON-Dateien
-SHOPS_DATA_FILE = "shops_data.json"  # Datei mit den Shop-Informationen
+setup_logger()
 
-# Bot-Setup
+# Bot-Konfiguration
+TOKEN = "TOKEN"
+DATA_DIRECTORY = "PFAD"
+SHOPS_DATA_FILE = "shops_data.json"
+
 intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = discord.Bot(intents=intents)  # Korrekte Py-cord-Initialisierung
 
-# SQLite-Datenbank initialisieren
+# SQLite-Datenbank mit Status-Spalte
 conn = sqlite3.connect("notifications.db")
 cursor = conn.cursor()
 cursor.execute("""
@@ -47,14 +44,15 @@ CREATE TABLE IF NOT EXISTS notifications (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT,
     species TEXT,
-    regions TEXT
+    regions TEXT,
+    status TEXT DEFAULT 'active',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 """)
 conn.commit()
 
-# Shop-Daten laden (Shop-ID -> Land und Name)
+# Shop-Daten laden
 def load_shop_data():
-    logging.info("Lade Shop-Daten...")
     shop_data = {}
     try:
         with open(SHOPS_DATA_FILE, "r") as f:
@@ -66,37 +64,30 @@ def load_shop_data():
                     "name": shop["name"],
                     "url": shop["url"]
                 }
-        logging.info(f"Geladene Shops: {shop_data}")
+        return shop_data
     except FileNotFoundError:
         logging.error(f"{SHOPS_DATA_FILE} nicht gefunden.")
-    return shop_data
+        return {}
 
 SHOP_DATA = load_shop_data()
 
-# Überprüfen, ob eine Art in den JSON-Dateien existiert (auch wenn nicht verfügbar)
+# Hilfsfunktionen
 def species_exists(species):
-    logging.info(f"Prüfe, ob die Art '{species}' existiert...")
     for filename in os.listdir(DATA_DIRECTORY):
         if filename.endswith(".json"):
             file_path = os.path.join(DATA_DIRECTORY, filename)
-            logging.info(f"Durchsuche Datei: {file_path}")
             with open(file_path, "r") as f:
                 data = json.load(f)
                 for product in data:
                     if "title" in product and species.lower() in product["title"].lower():
-                        logging.info(f"Art '{species}' gefunden in Datei {file_path}")
                         return True
-    logging.info(f"Art '{species}' nicht gefunden.")
     return False
 
-# Überprüfen, ob eine Art in einer bestimmten Region verfügbar ist
 def check_availability_for_species(species, regions):
-    logging.info(f"Prüfe Verfügbarkeit für Art '{species}' in Regionen: {regions}")
     available_products = []
     for filename in os.listdir(DATA_DIRECTORY):
         if filename.endswith(".json"):
             file_path = os.path.join(DATA_DIRECTORY, filename)
-            logging.info(f"Durchsuche Datei: {file_path}")
             with open(file_path, "r") as f:
                 data = json.load(f)
                 for product in data:
@@ -111,130 +102,134 @@ def check_availability_for_species(species, regions):
                                 "currency_iso": product["currency_iso"],
                                 "antcheck_url": product["antcheck_url"],
                                 "shop_url": SHOP_DATA[shop_id]["url"],
-                                "changed_at": product["changed_at"],
-                                "updated_at": product["updated_at"],
                                 "shop_id": shop_id
                             })
-                            logging.info(f"Verfügbares Produkt gefunden: {available_products[-1]}")
-    logging.info(f"Gefundene verfügbare Produkte: {available_products}")
     return available_products
 
-# Funktion, um die Verfügbarkeit sofort zu prüfen
+# Kernfunktionen
 async def trigger_availability_check(user_id, species, regions):
-    logging.info(f"Starte sofortige Verfügbarkeitsprüfung für User-ID: {user_id}, Art: {species}, Regionen: {regions}")
-    regions_list = [region.strip() for region in regions.split(",")]
-
+    regions_list = regions.split(",")
     available_products = check_availability_for_species(species, regions_list)
+
     if available_products:
         try:
             user = await bot.fetch_user(int(user_id))
             for product in available_products:
                 message = (
-                    f"**Ameisenart:** {product['species']} - **Shopname:** {product['shop_name']} (**Region:** {SHOP_DATA[product['shop_id']]['country']})\n"
+                    f"**Ameisenart:** {product['species']} - **Shop:** {product['shop_name']}\n"
                     f"**Preis:** {product['min_price']} - {product['max_price']} {product['currency_iso']}\n"
                     f"[AntCheck URL](<{product['antcheck_url']}>) | [Shop URL](<{product['shop_url']}>)\n"
-                    f"**Geändert am:** {product['changed_at']} | **Aktualisiert am:** {product['updated_at']}\n\n"
-                    f"*Alle Daten sind von antcheck.info und Bot ist geschrieben von jonas_ants! Deine Anfrage ist nun aus der Datenbank gelöscht.*"
                 )
                 await user.send(message)
-                logging.info(f"Nachricht an Benutzer {user.name} gesendet: {message}")
-            try:
-                cursor.execute("DELETE FROM notifications WHERE user_id=? AND species=? AND regions=?", (user_id, species, regions))
-                conn.commit()
-                logging.info(f"Spezifische Benachrichtigung für Benutzer-ID {user_id}, Art {species}, Regionen {regions} gelöscht.")
-            except sqlite3.Error as e:
-                logging.error(f"Fehler beim Löschen aus der Datenbank: {e}")
-        except discord.errors.Forbidden as e:
-            logging.error(f"Kann keine Nachricht an Benutzer {user_id} senden: {e}")
-        except discord.errors.NotFound as e:
-            logging.error(f"Benutzer {user_id} nicht gefunden: {e}")
+
+            cursor.execute("UPDATE notifications SET status='completed' WHERE user_id=? AND species=? AND regions=?",
+                          (user_id, species, regions))
+            conn.commit()
         except Exception as e:
-            logging.error(f"Unbekannter Fehler beim Senden der Nachricht: {e}")
-    else:
-        logging.info(f"Keine verfügbaren Produkte gefunden für User-ID: {user_id}, Art: {species}, Regionen: {regions}")
+            logging.error(f"Fehler bei Verfügbarkeitsprüfung: {e}")
 
-# Slash-Command für Benachrichtigungen
-@bot.command()
+# Befehle
+@bot.slash_command(name="stats", description="Zeigt Benachrichtigungsstatistiken")
+@commands.has_permissions(administrator=True)
+async def stats(ctx):
+    try:
+        cursor.execute("SELECT COUNT(*) FROM notifications WHERE status='active'")
+        active = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM notifications WHERE status='completed'")
+        completed = cursor.fetchone()[0]
+
+        cursor.execute("SELECT species, COUNT(*) FROM notifications GROUP BY species ORDER BY COUNT(*) DESC LIMIT 5")
+        top_species = cursor.fetchall()
+
+        stats_msg = (
+            f"**📊 Statistik**\n"
+            f"Aktive Benachrichtigungen: {active}\n"
+            f"Abgeschlossene Benachrichtigungen: {completed}\n"
+            f"**Top 5 gesuchte Arten:**\n"
+        )
+        for species, count in top_species:
+            stats_msg += f"- {species}: {count} Anfragen\n"
+
+        await ctx.respond(stats_msg)
+    except Exception as e:
+        logging.error(f"Fehler in stats: {e}")
+        await ctx.respond("Fehler beim Abrufen der Statistiken")
+
+@bot.slash_command(name="history", description="Zeigt deine Benachrichtigungshistorie")
+async def history(ctx):
+    try:
+        cursor.execute("SELECT species, regions, status, created_at FROM notifications WHERE user_id=?", (str(ctx.author.id),))
+        history = cursor.fetchall()
+
+        if not history:
+            await ctx.respond("❌ Keine vergangenen Benachrichtigungen gefunden")
+            return
+
+        history_msg = "**📜 Deine Historie:**\n"
+        for entry in history:
+            status_emoji = "✅" if entry[2] == "completed" else "🔄"
+            history_msg += f"{status_emoji} {entry[0]} in {entry[1]} ({entry[3].split()[0]})\n"
+
+        await ctx.respond(history_msg)
+    except Exception as e:
+        logging.error(f"Fehler in history: {e}")
+        await ctx.respond("Fehler beim Abrufen der Historie")
+
+@bot.slash_command(name="notification", description="Richte eine Benachrichtigung ein")
 async def notification(ctx, species: str, regions: str):
-    regions_list = [region.strip() for region in regions.split(",")]
-    logging.info(f"Befehl '!notification' ausgeführt von {ctx.author}. Art: {species}, Regionen: {regions_list}")
+    regions_list = [r.strip() for r in regions.split(",")]
+    valid_regions = [r for r in regions_list if any(s["country"] == r for s in SHOP_DATA.values())]
 
-    # Länderkürzel validieren
-    valid_regions = []
-    invalid_regions = []
-    for region in regions_list:
-        if any(shop["country"] == region for shop in SHOP_DATA.values()):
-            valid_regions.append(region)
-        else:
-            invalid_regions.append(region)
-
-    if invalid_regions:
-        await ctx.send(f"Ungültige Länderkürzel: {', '.join(invalid_regions)}. Gültige Länderkürzel sind: {', '.join(set(shop['country'] for shop in SHOP_DATA.values()))}")
-        logging.info(f"Ungültige Länderkürzel: {invalid_regions}")
-        return
-
-    # Prüfen, ob der Benutzer diese Suche bereits hat
-    cursor.execute("SELECT * FROM notifications WHERE user_id=? AND species=? AND regions=?", (str(ctx.author.id), species, ",".join(valid_regions)))
-    existing_notification = cursor.fetchone()
-
-    if existing_notification:
-        await ctx.send("Du hast diese Benachrichtigung bereits eingerichtet.")
-        logging.info("Benutzer hat diese Benachrichtigung bereits eingerichtet.")
+    if not valid_regions:
+        await ctx.respond("❌ Ungültige Regionen angegeben")
         return
 
     if species_exists(species):
-        user_id = str(ctx.author.id)
-        cursor.execute("INSERT INTO notifications (user_id, species, regions) VALUES (?, ?, ?)",
-                       (user_id, species, ",".join(valid_regions)))
-        conn.commit()
-        await ctx.send(f"Benachrichtigung für '{species}' in Regionen {', '.join(valid_regions)} wurde erfolgreich eingerichtet.")
-        logging.info("Benachrichtigung erfolgreich gespeichert.")
-
-        # Sofortige Auslösung der Prüfung
-        await trigger_availability_check(user_id, species, ",".join(valid_regions))
+        try:
+            cursor.execute("INSERT INTO notifications (user_id, species, regions) VALUES (?, ?, ?)",
+                          (str(ctx.author.id), species, ",".join(valid_regions)))
+            conn.commit()
+            await ctx.respond(f"🔔 Benachrichtigung für **{species}** in {', '.join(valid_regions)} eingerichtet")
+            await trigger_availability_check(ctx.author.id, species, ",".join(valid_regions))
+        except sqlite3.IntegrityError:
+            await ctx.respond("❌ Diese Benachrichtigung existiert bereits")
     else:
-        await ctx.send(f"Die Art '{species}' wurde nicht gefunden.")
-        logging.info("Die Art wurde nicht gefunden und keine Benachrichtigung gespeichert.")
+        await ctx.respond("❌ Art nicht gefunden")
 
-# Test funktion ob eine PN ankommt
-@bot.command()
+@bot.slash_command(name="testnotification", description="Teste PN-Benachrichtigungen")
 async def testnotification(ctx):
-    """Sendet eine Testnachricht an den Benutzer, um PN-Benachrichtigungen zu testen."""
     try:
-        user = ctx.author
-        test_message = "Dies ist eine Testnachricht vom Bot. PN-Benachrichtigungen funktionieren!"
-        await user.send(test_message)
-        await ctx.send("Testnachricht erfolgreich gesendet! Überprüfe deine privaten Nachrichten.")
-        logging.info(f"Testnachricht erfolgreich an Benutzer {user.name} gesendet.")
-    except discord.errors.Forbidden:
-        await ctx.send("Ich konnte dir keine PN senden. Bitte überprüfe deine Einstellungen und erlaube mir, dir Nachrichten zu senden.")
-        logging.error(f"PN konnte nicht an Benutzer {ctx.author.name} gesendet werden.")
-    except Exception as e:
-        await ctx.send("Es gab einen Fehler beim Senden der Testnachricht.")
-        logging.error(f"Fehler beim Senden der Testnachricht: {e}")
+        await ctx.author.send("📨 Testnachricht erfolgreich!")
+        await ctx.respond("✅ Testnachricht gesendet!", ephemeral=True)
+    except discord.Forbidden:
+        await ctx.respond("❌ Konnte keine PN senden - bitte Privatnachrichten aktivieren")
 
-# Überwachung der Produkte (alle 5 Minuten)
+# Automatisierte Aufgaben
+@tasks.loop(hours=24)
+async def clean_old_notifications():
+    try:
+        cutoff = datetime.now() - timedelta(days=365)
+        cursor.execute("UPDATE notifications SET status='completed' WHERE created_at < ? AND status='active'",
+                      (cutoff.strftime('%Y-%m-%d'),))
+        conn.commit()
+        logging.info(f"Alte Benachrichtigungen vor {cutoff.date()} archiviert")
+    except Exception as e:
+        logging.error(f"Fehler bei Bereinigung: {e}")
+
 @tasks.loop(minutes=5)
 async def check_availability():
-    logging.info("Starte planmäßige Überprüfung der Verfügbarkeit...")
-    cursor.execute("SELECT * FROM notifications")
-    notifications = cursor.fetchall()
-    logging.info(f"Geladene Benachrichtigungen aus der Datenbank: {notifications}")
-
-    for notification in notifications:
-        user_id, species, regions = notification[1], notification[2], notification[3]
-
+    cursor.execute("SELECT user_id, species, regions FROM notifications WHERE status='active'")
+    for user_id, species, regions in cursor.fetchall():
         await trigger_availability_check(user_id, species, regions)
 
-# Event: Bot ist bereit
-async def on_ready_event():
-    setup_logger()
-    logging.info(f"Bot ist online! Eingeloggt als {bot.user.name}")
-    check_availability.start()
-
+# Bot-Events
 @bot.event
 async def on_ready():
-    await on_ready_event()
+    logging.info(f"Bot eingeloggt als {bot.user.name}")
+    clean_old_notifications.start()
+    check_availability.start()
 
 # Bot starten
-bot.run(TOKEN)
+if __name__ == "__main__":
+    bot.run(TOKEN)
