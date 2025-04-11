@@ -34,7 +34,7 @@ SHOPS_DATA_FILE = "shops_data.json"
 intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
-bot = discord.Bot(intents=intents)  # Korrekte Py-cord-Initialisierung
+bot = discord.Bot(intents=intents)
 
 # SQLite-Datenbank mit Status-Spalte
 conn = sqlite3.connect("notifications.db")
