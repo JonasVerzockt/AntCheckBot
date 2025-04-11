@@ -275,6 +275,43 @@ async def system(ctx):
         logging.error(f"Fehler im /system-Befehl: {e}")
         await ctx.respond("❌ Fehler beim Abrufen des Status")
 
+@bot.slash_command(name="help", description="Zeigt alle Befehle an.")
+async def help(ctx):
+    try:
+        help_message = (
+            f"### **`/notification`**\n"
+            f"**Beschreibung**: Erstellt eine Benachrichtigung für eine bestimmte Ameisenart in spezifischen Regionen.\n"
+            f"**Anforderungen**:\n"
+            f"- `species`: Name der Ameisenart.\n"
+            f"- `regions`: Komma-separierte Liste von Regionen (z. B. de,ch).\n"
+            f"**Verwendung**: /notification species:<Ameisenart> regions:<Regionen>**\n\n"
+            f"### **`/history`**\n"
+            f"**Beschreibung**: Zeigt die Historie der Benachrichtigungen des Nutzers.\n"
+            f"**Anforderungen**: Keine speziellen Berechtigungen erforderlich.\n"
+            f"**Verwendung**: /history\n\n"
+            f"### **`/testnotification`**\n"
+            f"**Beschreibung**: Sendet eine Testnachricht an den Nutzer, um Benachrichtigungen zu testen.\n"
+            f"**Anforderungen**: Der Nutzer muss private Nachrichten aktiviert haben.\n"
+            f"**Verwendung**:  /testnotification\n\n"
+            f"### **`/stats`**\n"
+            f"**Beschreibung**: Zeigt Statistiken zu aktiven und abgeschlossenen Benachrichtigungen sowie die Top 5 gesuchten Arten.\n"
+            f"**Anforderungen**: Nur Administratoren können diesen Befehl ausführen.\n"
+            f"**Verwendung**:  /stats\n\n"
+            f"### **`/system`**\n"
+            f"**Beschreibung**: Zeigt die Uptime an und den Status der DB.\n"
+            f"**Anforderungen**: Nur Administratoren können diesen Befehl ausführen.\n"
+            f"**Verwendung**:  /system"
+        )
+
+        await ctx.respond(help_message)
+
+    except Exception as e:
+        logging.error(f"Fehler im /help-Befehl: {e}")
+        await ctx.respond("❌ Fehler beim Abrufen der Hilfen")
+
+    finally:
+        logging.info("Der /help-Befehl wurde ausgeführt.")
+
 # Automatisierte Aufgaben
 @tasks.loop(hours=24)
 async def clean_old_notifications():
