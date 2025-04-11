@@ -302,7 +302,13 @@ async def update_bot_status():
     uptime_hours, remainder = divmod(uptime.seconds, 3600)
     uptime_minutes, _ = divmod(remainder, 60)
 
-    status_message = f"Uptime: {uptime_days}d {uptime_hours}h {uptime_minutes}m"
+    server_count = len(bot.guilds)
+    user_count = sum(guild.member_count for guild in bot.guilds)
+
+    status_message = (
+        f"Uptime: {uptime_days}d {uptime_hours}h {uptime_minutes}m | "
+        f"{server_count} Servers | {user_count} Users"
+    )
 
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=status_message))
 
