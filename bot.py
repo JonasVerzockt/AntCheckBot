@@ -7,6 +7,10 @@ import logging
 from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
 import asyncio
+import psutil
+import platform
+from datetime import timedelta
+
 
 # Logging konfigurieren
 def setup_logger():
@@ -248,6 +252,54 @@ async def testnotification(ctx):
     except discord.Forbidden:
         await ctx.respond("❌ Konnte keine PN senden - bitte Privatnachrichten aktivieren")
 
+@bot.slash_command(name="status", description="Zeigt den Status des Bots und des Systems")
+@commands.has_permissions(administrator=True)
+async def status(ctx):
+    try:
+        current_time = datetime.now()
+        uptime = current_time - bot.start_time
+
+        cpu_usage = psutil.cpu_percent(interval=1)
+        memory_info = psutil.virtual_memory()
+        ram_usage = memory_info.percent
+
+        cursor.execute("SELECT COUNT(*) FROM notifications")
+        total_notifications = cursor.fetchone()[0]
+
+        system_info = platform.uname()
+        
+        disk_usage = psutil.disk_usage('/').percent
+        net_io = psutil.net_io_counters()
+        
+        integrity_check = cursor.execute("PRAGMA integrity_check").fetchone()[0]
+        
+        status_message = (
+            f"**🤖 Bot-Status**\n"
+            
+            f"Uptime: {str(timedelta(seconds=uptime.total_seconds()))}\n"
+            f"CPU-Auslastung: {cpu_usage}%\n"
+            f"RAM-Auslastung: {ram_usage}%\n"            
+            
+            f"**🔍 Datenbankstatus:** {integrity_check}\n"
+            f"Gesamte Benachrichtigungen in der DB: {total_notifications}\n\n"
+            
+            f"**🖥️ Systeminformationen**\n"
+            f"Betriebssystem: {system_info.system} {system_info.release}\n"
+            f"Prozessor: {system_info.processor}\n"
+            f"Hostname: {system_info.node}"
+            
+            f"**💾 Festplatte:** {disk_usage}% belegt\n"
+            
+            f"**🌐 Netzwerk:**\n"
+            f"- Gesendet: {net_io.bytes_sent / 1024**2:.2f} MB\n"
+            f"- Empfangen: {net_io.bytes_recv / 1024**2:.2f} MB"
+        )
+
+        await ctx.respond(status_message)
+    except Exception as e:
+        logging.error(f"Fehler im /status-Befehl: {e}")
+        await ctx.respond("❌ Fehler beim Abrufen des Status")
+
 # Automatisierte Aufgaben
 @tasks.loop(hours=24)
 async def clean_old_notifications():
@@ -269,7 +321,8 @@ async def check_availability():
 # Bot-Events
 @bot.event
 async def on_ready():
-    logging.info(f"Bot eingeloggt als {bot.user.name}")
+    bot.start_time = datetime.now()
+    logging.info(f"Bot gestartet als {bot.user.name}")
     clean_old_notifications.start()
     check_availability.start()
 
