@@ -120,7 +120,7 @@ async def trigger_availability_check(user_id, species, regions):
                 message = (
                     f"**Ameisenart:** {product['species']} - **Shop:** {product['shop_name']}\n"
                     f"**Preis:** {product['min_price']} - {product['max_price']} {product['currency_iso']}\n"
-                    f"[AntCheck URL](<{product['antcheck_url']}>) | [Shop URL](<{product['shop_url']}>)\n"
+                    f"[Produkt URL](<{product['antcheck_url']}>) | [Shop-Startseite URL](<{product['shop_url']}>)\n"
                 )
                 await user.send(message)
 
