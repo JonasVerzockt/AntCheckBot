@@ -58,7 +58,7 @@ def setup_logger():
 setup_logger()
 logger = logging.getLogger()
 
-def delete_old_files(directory=".", hours=7):
+def delete_old_files(directory=".", hours=6):
     now = time.time()
     for filename in os.listdir(directory):
         if filename.startswith("products_shop_") and filename.endswith(".json"):
