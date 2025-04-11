@@ -53,7 +53,6 @@ Dieses Skript ist für das Abrufen von Daten von der AntCheck-API und das Speich
 
 1. Klone das Repository:
 git clone https://github.com/JonasVerzockt/AntCheckBot.git
-cd AntCheckBot
 
 2. Installiere die erforderlichen Bibliotheken:
 requests
