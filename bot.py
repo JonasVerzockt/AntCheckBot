@@ -293,6 +293,19 @@ async def check_availability():
     for user_id, species, regions in cursor.fetchall():
         await trigger_availability_check(user_id, species, regions)
 
+@tasks.loop(seconds=60)
+async def update_bot_status():
+    current_time = datetime.now()
+    uptime = current_time - bot.start_time
+
+    uptime_days = uptime.days
+    uptime_hours, remainder = divmod(uptime.seconds, 3600)
+    uptime_minutes, _ = divmod(remainder, 60)
+
+    status_message = f"Uptime: {uptime_days}d {uptime_hours}h {uptime_minutes}m"
+
+    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=status_message))
+
 # Bot-Events
 @bot.event
 async def on_ready():
@@ -302,6 +315,7 @@ async def on_ready():
     print([command.name for command in bot.application_commands])
     clean_old_notifications.start()
     check_availability.start()
+    update_bot_status.start()
 
 # Bot starten
 if __name__ == "__main__":
