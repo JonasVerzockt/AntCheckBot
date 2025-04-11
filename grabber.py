@@ -1,3 +1,31 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+File: grabber.py
+Author: Jonas Beier
+Date: 2025-04-11
+Version: 1.0
+Description:
+    Dieses Skript ruft Daten von der AntCheck-API ab, speichert Shop- und Produktdaten 
+    in JSON-Dateien und bereinigt alte Dateien basierend auf ihrem Alter. Es bietet 
+    Funktionen für API-Datenabruf, Dateiverwaltung und Datenverarbeitung.
+
+Dependencies:
+    - requests
+    - json
+    - os
+    - time
+
+Setup:
+    1. Installiere die benötigten Python-Bibliotheken:
+       pip install requests
+    2. Setze deinen API-Schlüssel in der Variable `API_KEY`.
+    3. Stelle sicher, dass das Skript Zugriff auf das Verzeichnis hat, in dem die JSON-Dateien gespeichert werden.
+
+License: CC BY-NC 4.0
+Contact: https://github.com/JonasVerzockt/
+"""
 import requests
 import json
 import os

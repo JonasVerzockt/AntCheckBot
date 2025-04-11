@@ -1,3 +1,34 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+File: bot.py
+Author: Jonas Beier
+Date: 2025-04-11
+Version: 1.0
+Description:
+    Dieses Skript implementiert einen Discord-Bot mit verschiedenen Funktionen, 
+    darunter Benachrichtigungen, Statistiken und Systemstatus. Es verwendet SQLite 
+    zur Speicherung von Benachrichtigungen und JSON-Dateien für Shop-Daten.
+
+Dependencies:
+    - discord.py
+    - sqlite3
+    - asyncio
+    - json
+    - logging
+    - psutil
+    - platform
+
+Setup:
+    1. Installiere die benötigten Python-Bibliotheken:
+       pip install discord.py
+    2. Stelle sicher, dass die Datei `shops_data.json` und der Datenbankpfad korrekt konfiguriert sind.
+    3. Setze den Discord-Bot-Token in der Variable `TOKEN`.
+
+License: CC BY-NC 4.0
+Contact: https://github.com/JonasVerzockt/
+"""
 import discord
 from discord.ext import commands, tasks
 import sqlite3
@@ -279,25 +310,25 @@ async def system(ctx):
 async def help(ctx):
     try:
         help_message = (
-            f"### **`/notification`**\n"
+            f"`/notification`\n"
             f"**Beschreibung**: Erstellt eine Benachrichtigung für eine bestimmte Ameisenart in spezifischen Regionen.\n"
             f"**Anforderungen**:\n"
             f"- `species`: Name der Ameisenart.\n"
             f"- `regions`: Komma-separierte Liste von Regionen (z. B. de,ch).\n"
             f"**Verwendung**: /notification species:<Ameisenart> regions:<Regionen>**\n\n"
-            f"### **`/history`**\n"
+            f"`/history`\n"
             f"**Beschreibung**: Zeigt die Historie der Benachrichtigungen des Nutzers.\n"
             f"**Anforderungen**: Keine speziellen Berechtigungen erforderlich.\n"
             f"**Verwendung**: /history\n\n"
-            f"### **`/testnotification`**\n"
+            f"`/testnotification`\n"
             f"**Beschreibung**: Sendet eine Testnachricht an den Nutzer, um Benachrichtigungen zu testen.\n"
             f"**Anforderungen**: Der Nutzer muss private Nachrichten aktiviert haben.\n"
             f"**Verwendung**:  /testnotification\n\n"
-            f"### **`/stats`**\n"
+            f"`/stats`\n"
             f"**Beschreibung**: Zeigt Statistiken zu aktiven und abgeschlossenen Benachrichtigungen sowie die Top 5 gesuchten Arten.\n"
             f"**Anforderungen**: Nur Administratoren können diesen Befehl ausführen.\n"
             f"**Verwendung**:  /stats\n\n"
-            f"### **`/system`**\n"
+            f"`/system`\n"
             f"**Beschreibung**: Zeigt die Uptime an und den Status der DB.\n"
             f"**Anforderungen**: Nur Administratoren können diesen Befehl ausführen.\n"
             f"**Verwendung**:  /system"
