@@ -32,6 +32,7 @@ Dieses Skript enthält die Logik für den Discord-Bot.
    - `/stats`: Zeigt Statistiken zu aktiven und abgeschlossenen Benachrichtigungen sowie den Top 5 gesuchten Arten (nur Administratoren).
    - `/history`: Zeigt die Historie der Benachrichtigungen des Nutzers.
    - `/testnotification`: Teste private Nachrichten-Benachrichtigungen.
+   - `/system`: Zeigt die Uptime an und den Status der DB (nur Administratoren).
 
 2. **Automatisierte Aufgaben**:
    - Tägliche Bereinigung (`clean_old_notifications`): Archiviert Benachrichtigungen, die älter als ein Jahr sind.
@@ -46,23 +47,6 @@ Dieses Skript ist für das Abrufen von Daten von der AntCheck-API und das Speich
 #### Hauptfunktionen:
 - API-Daten abrufen: Ruft Shop- und Produktdaten von der AntCheck-API ab.
 - JSON-Daten speichern: Speichert die abgerufenen Daten in JSON-Dateien.
-
----
-
-## Installation
-
-1. Klone das Repository:
-git clone https://github.com/JonasVerzockt/AntCheckBot.git
-
-2. Installiere die erforderlichen Bibliotheken:
-requests
-json
-os
-time
-discord
-sqlite3
-logging
-asyncio
 
 ---
 
