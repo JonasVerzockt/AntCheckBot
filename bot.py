@@ -79,7 +79,7 @@ def species_exists(species):
             with open(file_path, "r") as f:
                 data = json.load(f)
                 for product in data:
-                    if "title" in product and species.lower() in product["title"].lower():
+                    if "title" in product and product["title"].strip().lower() == species.lower():
                         return True
     return False
 
@@ -91,7 +91,9 @@ def check_availability_for_species(species, regions):
             with open(file_path, "r") as f:
                 data = json.load(f)
                 for product in data:
-                    if "title" in product and species.lower() in product["title"].lower() and product.get("in_stock", False):
+                    if ("title" in product
+                        and product["title"].strip().lower() == species.lower()
+                        and product.get("in_stock", False)):
                         shop_id = product["shop_id"]
                         if shop_id in SHOP_DATA and SHOP_DATA[shop_id]["country"] in regions:
                             available_products.append({
@@ -139,6 +141,9 @@ async def stats(ctx):
         cursor.execute("SELECT COUNT(*) FROM notifications WHERE status='completed'")
         completed = cursor.fetchone()[0]
 
+        cursor.execute("SELECT COUNT(*) FROM notifications WHERE status='expired'")
+        expired = cursor.fetchone()[0]
+
         cursor.execute("SELECT species, COUNT(*) FROM notifications GROUP BY species ORDER BY COUNT(*) DESC LIMIT 5")
         top_species = cursor.fetchall()
 
@@ -146,6 +151,7 @@ async def stats(ctx):
             f"**📊 Statistik**\n"
             f"Aktive Benachrichtigungen: {active}\n"
             f"Abgeschlossene Benachrichtigungen: {completed}\n"
+            f"Abgelaufene Benachrichtigungen: {expired}\n"
             f"**Top 5 gesuchte Arten:**\n"
         )
         for species, count in top_species:
@@ -159,17 +165,54 @@ async def stats(ctx):
 @bot.slash_command(name="history", description="Zeigt deine Benachrichtigungshistorie")
 async def history(ctx):
     try:
-        cursor.execute("SELECT species, regions, status, created_at FROM notifications WHERE user_id=?", (str(ctx.author.id),))
+        cursor.execute("SELECT species, regions, status, created_at FROM notifications WHERE user_id=? ORDER BY created_at DESC", (str(ctx.author.id),))
         history = cursor.fetchall()
 
         if not history:
             await ctx.respond("❌ Keine vergangenen Benachrichtigungen gefunden")
             return
 
-        history_msg = "**📜 Deine Historie:**\n"
+        grouped_history = {
+            "completed": [],
+            "expired": [],
+            "active": [],
+            "other": []
+        }
+
         for entry in history:
-            status_emoji = "✅" if entry[2] == "completed" else "🔄"
-            history_msg += f"{status_emoji} {entry[0]} in {entry[1]} ({entry[3].split()[0]})\n"
+            if entry[2] == "completed":
+                grouped_history["completed"].append(entry)
+            elif entry[2] == "expired":
+                grouped_history["expired"].append(entry)
+            elif entry[2] == "active":
+                grouped_history["active"].append(entry)
+            else:
+                grouped_history["other"].append(entry)
+
+        history_msg = "**📜 Deine Historie:**\n"
+
+        for status, entries in grouped_history.items():
+            if not entries:
+                continue
+
+            if status == "completed":
+                status_emoji = "✅ Abgeschlossen:"
+            elif status == "expired":
+                status_emoji = "⏳ Abgelaufen:"
+            elif status == "active":
+                status_emoji = "🔄 Aktiv:"
+            else:
+                status_emoji = "❓ Sonstige:"
+
+            displayed_entries = entries[:10]
+            remaining_count = len(entries) - 10
+
+            history_msg += f"\n**{status_emoji}**\n"
+            for entry in displayed_entries:
+                history_msg += f"- {entry[0]} in {entry[1]} ({entry[3].split()[0]})\n"
+
+            if remaining_count > 0:
+                history_msg += f"  ...und {remaining_count} weitere\n"
 
         await ctx.respond(history_msg)
     except Exception as e:
@@ -210,10 +253,10 @@ async def testnotification(ctx):
 async def clean_old_notifications():
     try:
         cutoff = datetime.now() - timedelta(days=365)
-        cursor.execute("UPDATE notifications SET status='completed' WHERE created_at < ? AND status='active'",
-                      (cutoff.strftime('%Y-%m-%d'),))
+        cursor.execute("UPDATE notifications SET status='expired' WHERE created_at < ? AND status='active'",
+                       (cutoff.strftime('%Y-%m-%d'),))
         conn.commit()
-        logging.info(f"Alte Benachrichtigungen vor {cutoff.date()} archiviert")
+        logging.info(f"Alte Benachrichtigungen vor {cutoff.date()} als 'expired' markiert")
     except Exception as e:
         logging.error(f"Fehler bei Bereinigung: {e}")
 
