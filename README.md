@@ -2,7 +2,7 @@
 
 AntCheckBot ist ein Python-basierter Discord-Bot, der die Verfügbarkeit von Ameisenkolonien auf verschiedenen Online-Shops überwacht und Benachrichtigungen sendet. Der Bot verwendet die AntCheck-API, um Daten abzurufen.
 
-[AntCheck API](https://antcheck.info/api)
+[AntCheck API](https://antcheck.info/api) - Den Bot testen gerne auf  meinen [TEST Discord](https://discord.gg/cYtz52MXph)!
 
 ---
 
