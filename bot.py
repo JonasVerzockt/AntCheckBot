@@ -5,7 +5,7 @@
 File: bot.py
 Author: Jonas Beier
 Date: 2025-04-11
-Version: 1.1
+Version: 1.2
 Description:
     Dieses Skript implementiert einen Discord-Bot mit verschiedenen Funktionen, 
     darunter Benachrichtigungen, Statistiken und Systemstatus. Es verwendet SQLite 
@@ -141,6 +141,27 @@ def check_availability_for_species(species, regions):
                                 "shop_id": shop_id
                             })
     return available_products
+
+def get_file_age(file_path):
+    try:
+        modification_time = os.path.getmtime(file_path)
+        modification_date = datetime.fromtimestamp(modification_time)
+
+        current_date = datetime.now()
+
+        time_difference = current_date - modification_date
+        age_hours, remainder = divmod(time_difference.seconds, 3600)
+        age_minutes = remainder // 60
+
+        if time_difference.days > 0:
+            return f"{time_difference.days} Tage alt", modification_date.strftime('%Y-%m-%d %H:%M:%S')
+        elif age_hours > 0:
+            return f"{age_hours} Stunden und {age_minutes} Minuten alt", modification_date.strftime('%Y-%m-%d %H:%M:%S')
+        else:
+            return f"{age_minutes} Minuten alt", modification_date.strftime('%Y-%m-%d %H:%M:%S')
+    except FileNotFoundError:
+        logging.error(f"Datei '{file_path}' nicht gefunden.")
+        return None, None
 
 # Kernfunktionen
 async def trigger_availability_check(user_id, species, regions):
@@ -294,11 +315,19 @@ async def system(ctx):
 
         integrity_check = cursor.execute("PRAGMA integrity_check").fetchone()[0]
 
+        file_age, last_modified = get_file_age(SHOPS_DATA_FILE)
+        
+        if file_age is not None:
+            file_status = f"Letzte Änderung: {last_modified} ({file_age} Tage alt)"
+        else:
+            file_status = "Datei nicht gefunden oder Fehler beim Lesen."
+
         system_message = (
             f"**🤖 Bot-Status**\n"
             f"Uptime: {str(timedelta(seconds=uptime.total_seconds()))}\n\n"
             f"**🔍 Datenbankstatus:** {integrity_check}\n"
             f"Gesamte Benachrichtigungen in der DB: {total_notifications}\n\n"
+            f"**📂 Shop-Daten:**\n{file_status}\n"
         )
 
         await ctx.respond(system_message)
