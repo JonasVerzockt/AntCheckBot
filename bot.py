@@ -318,7 +318,7 @@ async def system(ctx):
         file_age, last_modified = get_file_age(SHOPS_DATA_FILE)
         
         if file_age is not None:
-            file_status = f"Letzte Änderung: {last_modified} ({file_age} Tage alt)"
+            file_status = f"Letzte Änderung: {last_modified} ({file_age})"
         else:
             file_status = "Datei nicht gefunden oder Fehler beim Lesen."
 
