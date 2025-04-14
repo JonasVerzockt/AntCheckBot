@@ -280,7 +280,9 @@ async def notification(ctx, species: str, regions: str):
     valid_regions = [r for r in regions_list if any(s["country"] == r for s in SHOP_DATA.values())]
 
     if not valid_regions:
-        await ctx.respond("❌ Ungültige Regionen angegeben")
+        available_regions = sorted({s["country"] for s in SHOP_DATA.values()})
+        available_regions_str = ", ".join(available_regions)
+        await ctx.respond(f"❌ Ungültige Regionen angegeben. Verfügbare Regionen sind: {available_regions_str}. [ISO 3166 ALPHA-2](<https://de.wikipedia.org/wiki/ISO-3166-1-Kodierliste>)")
         return
 
     if species_exists(species):
@@ -291,9 +293,9 @@ async def notification(ctx, species: str, regions: str):
             await ctx.respond(f"🔔 Benachrichtigung für **{species}** in {', '.join(valid_regions)} eingerichtet")
             await trigger_availability_check(ctx.author.id, species, ",".join(valid_regions))
         except sqlite3.IntegrityError:
-            await ctx.respond("❌ Diese Benachrichtigung existiert bereits")
+            await ctx.respond("❌ Diese Benachrichtigung existiert bereits exakt so schon.")
     else:
-        await ctx.respond("❌ Art nicht gefunden")
+        await ctx.respond("❌ Art nicht gefunden, achte auf die korrekte Schreibweise oder diese Art ist noch nie gelistet worden.")
 
 @bot.slash_command(name="testnotification", description="Teste PN-Benachrichtigungen")
 async def testnotification(ctx):
