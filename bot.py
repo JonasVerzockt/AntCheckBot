@@ -310,7 +310,7 @@ async def history(ctx):
 
             history_msg += f"\n**{status_emoji}**\n"
             for entry in displayed_entries:
-                history_msg += f"- [ID: {entry[0]}] {entry[1]} in {entry[2]} ({entry[4].split()[0]})\n"
+                history_msg += f"- {entry[1]} in {entry[2]} ({entry[4].split()[0]}) - [ID: {entry[0]}]\n"
 
             if remaining_count > 0:
                 history_msg += f"  ...und {remaining_count} weitere\n"
