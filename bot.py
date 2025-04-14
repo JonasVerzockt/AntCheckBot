@@ -83,6 +83,13 @@ CREATE TABLE IF NOT EXISTS notifications (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 """)
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS global_stats (
+    key TEXT PRIMARY KEY,
+    value INTEGER DEFAULT 0
+)
+""")
+cursor.execute("INSERT OR IGNORE INTO global_stats (key, value) VALUES ('deleted_notifications', 0)")
 conn.commit()
 
 # Shop-Daten laden
@@ -167,7 +174,6 @@ def get_file_age(file_path):
 async def trigger_availability_check(user_id, species, regions):
     regions_list = regions.split(",")
     available_products = check_availability_for_species(species, regions_list)
-
     if available_products:
         try:
             user = await bot.fetch_user(int(user_id))
@@ -186,6 +192,42 @@ async def trigger_availability_check(user_id, species, regions):
             logging.error(f"Fehler bei Verfügbarkeitsprüfung: {e}")
 
 # Befehle
+@bot.slash_command(name="delete_notifications", description="Lösche mehrere Benachrichtigungen")
+async def delete_notifications(ctx, ids: str):
+    try:
+        id_list = [int(i.strip()) for i in ids.split(",") if i.strip().isdigit()]
+        if not id_list:
+            await ctx.respond("❌ Bitte kommagetrennte IDs angeben")
+            return
+
+        cursor.execute(
+            f"SELECT id FROM notifications WHERE user_id=? AND id IN ({','.join(['?']*len(id_list))})",
+            (str(ctx.author.id), *id_list)
+        )
+        user_ids = [row[0] for row in cursor.fetchall()]
+        
+        if not user_ids:
+            await ctx.respond("❌ Keine berechtigten Benachrichtigungen gefunden")
+            return
+
+        # Löschvorgang
+        cursor.execute(
+            f"DELETE FROM notifications WHERE user_id=? AND id IN ({','.join(['?']*len(user_ids))})",
+            (str(ctx.author.id), *user_ids)
+        )
+        
+        # Globalen Zähler aktualisieren
+        cursor.execute(
+            "UPDATE global_stats SET value = value + ? WHERE key = 'deleted_notifications'",
+            (len(user_ids),)
+        )
+        conn.commit()
+
+        await ctx.respond(f"🗑️ Erfolgreich gelöscht: {', '.join(map(str, user_ids))}")
+    except Exception as e:
+        logging.error(f"Löschfehler: {e}")
+        await ctx.respond("❌ Kritischer Fehler beim Löschen")
+
 @bot.slash_command(name="stats", description="Zeigt Benachrichtigungsstatistiken")
 @commands.has_permissions(administrator=True)
 async def stats(ctx):
@@ -202,11 +244,15 @@ async def stats(ctx):
         cursor.execute("SELECT species, COUNT(*) FROM notifications GROUP BY species ORDER BY COUNT(*) DESC LIMIT 5")
         top_species = cursor.fetchall()
 
+        cursor.execute("SELECT value FROM global_stats WHERE key = 'deleted_notifications'")
+        deleted_total = cursor.fetchone()[0]
+
         stats_msg = (
             f"**📊 Statistik**\n"
             f"Aktive Benachrichtigungen: {active}\n"
             f"Abgeschlossene Benachrichtigungen: {completed}\n"
             f"Abgelaufene Benachrichtigungen: {expired}\n"
+            f"**Global gelöscht:** {deleted_total}\n"
             f"**Top 5 gesuchte Arten:**\n"
         )
         for species, count in top_species:
@@ -220,7 +266,7 @@ async def stats(ctx):
 @bot.slash_command(name="history", description="Zeigt deine Benachrichtigungshistorie")
 async def history(ctx):
     try:
-        cursor.execute("SELECT species, regions, status, created_at FROM notifications WHERE user_id=? ORDER BY created_at DESC", (str(ctx.author.id),))
+        cursor.execute("SELECT id, species, regions, status, created_at FROM notifications WHERE user_id=? ORDER BY created_at DESC", (str(ctx.author.id),))
         history = cursor.fetchall()
 
         if not history:
@@ -235,11 +281,11 @@ async def history(ctx):
         }
 
         for entry in history:
-            if entry[2] == "completed":
+            if entry[3] == "completed":
                 grouped_history["completed"].append(entry)
-            elif entry[2] == "expired":
+            elif entry[3] == "expired":
                 grouped_history["expired"].append(entry)
-            elif entry[2] == "active":
+            elif entry[3] == "active":
                 grouped_history["active"].append(entry)
             else:
                 grouped_history["other"].append(entry)
@@ -264,7 +310,7 @@ async def history(ctx):
 
             history_msg += f"\n**{status_emoji}**\n"
             for entry in displayed_entries:
-                history_msg += f"- {entry[0]} in {entry[1]} ({entry[3].split()[0]})\n"
+                history_msg += f"- [ID: {entry[0]}] {entry[1]} in {entry[2]} ({entry[4].split()[0]})\n"
 
             if remaining_count > 0:
                 history_msg += f"  ...und {remaining_count} weitere\n"
@@ -278,7 +324,6 @@ async def history(ctx):
 async def notification(ctx, species: str, regions: str, force: bool = False):
     regions_list = [r.strip() for r in regions.split(",")]
     valid_regions = [r for r in regions_list if any(s["country"] == r for s in SHOP_DATA.values())]
-
     if not valid_regions:
         available_regions = sorted({s["country"] for s in SHOP_DATA.values()})
         available_regions_str = ", ".join(available_regions)
@@ -303,7 +348,6 @@ async def notification(ctx, species: str, regions: str, force: bool = False):
             await ctx.respond("❌ Diese Benachrichtigung existiert bereits exakt so schon.")
     else:
         await ctx.respond("❌ Art nicht gefunden, achte auf die korrekte Schreibweise oder diese Art ist noch nie gelistet worden.")
-
 
 @bot.slash_command(name="testnotification", description="Teste PN-Benachrichtigungen")
 async def testnotification(ctx):
@@ -355,6 +399,9 @@ async def help(ctx):
             f"- `species`: Name der Ameisenart.\n"
             f"- `regions`: Komma-separierte Liste von Regionen (z. B. de,ch).\n"
             f"Verwendung: /notification species:<Ameisenart> regions:<Regionen>\n\n"
+            f"`/delete_notifications`\n"
+            f"Beschreibung: Löscht mehrere Benachrichtigungen anhand ihrer IDs (kommagetrennt)\n"
+            f"Verwendung: /delete_notifications ids:12,34,56\n\n"
             f"`/history`\n"
             f"Beschreibung: Zeigt die Historie der Benachrichtigungen des Nutzers.\n"
             f"Anforderungen: Keine speziellen Berechtigungen erforderlich.\n"
