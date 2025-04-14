@@ -170,6 +170,12 @@ def get_file_age(file_path):
         logging.error(f"Datei '{file_path}' nicht gefunden.")
         return None, None
 
+def admin_or_manage_messages():
+    async def predicate(ctx):
+        perms = ctx.author.guild_permissions
+        return perms.administrator or perms.manage_messages
+    return commands.check(predicate)
+
 # Kernfunktionen
 async def trigger_availability_check(user_id, species, regions):
     regions_list = regions.split(",")
@@ -229,7 +235,7 @@ async def delete_notifications(ctx, ids: str):
         await ctx.respond("❌ Kritischer Fehler beim Löschen")
 
 @bot.slash_command(name="stats", description="Zeigt Benachrichtigungsstatistiken")
-@commands.has_permissions(administrator=True)
+@admin_or_manage_messages()
 async def stats(ctx):
     try:
         cursor.execute("SELECT COUNT(*) FROM notifications WHERE status='active'")
@@ -358,7 +364,7 @@ async def testnotification(ctx):
         await ctx.respond("❌ Konnte keine PN senden - bitte Privatnachrichten aktivieren")
 
 @bot.slash_command(name="system", description="Zeigt den Status des Bots und des Systems")
-@commands.has_permissions(administrator=True)
+@admin_or_manage_messages()
 async def system(ctx):
     try:
         current_time = datetime.now()
