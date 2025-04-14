@@ -275,7 +275,7 @@ async def history(ctx):
         await ctx.respond("Fehler beim Abrufen der Historie")
 
 @bot.slash_command(name="notification", description="Richte eine Benachrichtigung ein")
-async def notification(ctx, species: str, regions: str):
+async def notification(ctx, species: str, regions: str, force: bool = False):
     regions_list = [r.strip() for r in regions.split(",")]
     valid_regions = [r for r in regions_list if any(s["country"] == r for s in SHOP_DATA.values())]
 
@@ -285,17 +285,25 @@ async def notification(ctx, species: str, regions: str):
         await ctx.respond(f"❌ Ungültige Regionen angegeben. Verfügbare Regionen sind: {available_regions_str}. [ISO 3166 ALPHA-2](<https://de.wikipedia.org/wiki/ISO-3166-1-Kodierliste>)")
         return
 
-    if species_exists(species):
+    species_found = species_exists(species)
+
+    if species_found or force:
         try:
             cursor.execute("INSERT INTO notifications (user_id, species, regions) VALUES (?, ?, ?)",
                           (str(ctx.author.id), species, ",".join(valid_regions)))
             conn.commit()
-            await ctx.respond(f"🔔 Benachrichtigung für **{species}** in {', '.join(valid_regions)} eingerichtet")
+
+            if not species_found:
+                await ctx.respond(f"⚠️ Art **{species}** wurde nicht gefunden, aber die Benachrichtigung wurde dennoch eingerichtet (Force-Modus aktiviert).")
+            else:
+                await ctx.respond(f"🔔 Benachrichtigung für **{species}** in {', '.join(valid_regions)} eingerichtet")
+
             await trigger_availability_check(ctx.author.id, species, ",".join(valid_regions))
         except sqlite3.IntegrityError:
             await ctx.respond("❌ Diese Benachrichtigung existiert bereits exakt so schon.")
     else:
         await ctx.respond("❌ Art nicht gefunden, achte auf die korrekte Schreibweise oder diese Art ist noch nie gelistet worden.")
+
 
 @bot.slash_command(name="testnotification", description="Teste PN-Benachrichtigungen")
 async def testnotification(ctx):
