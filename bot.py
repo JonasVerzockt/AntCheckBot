@@ -238,7 +238,9 @@ async def trigger_availability_check(user_id, species, regions):
             message = f"{header}\n\n"
 
             for product in available:
-                message += l10n.get('availability_entry', lang).format(
+                message += l10n.get(
+                    'availability_entry',
+                    lang,
                     species=product['species'],
                     shop=product['shop_name'],
                     min_price=product['min_price'],
@@ -262,7 +264,7 @@ async def trigger_availability_check(user_id, species, regions):
         logging.error(f"Error in trigger_availability_check: {e}")
 
 # Befehle
-@bot.slash_command(name="startup", description="Set the server language and where the bot should respond")
+@bot.slash_command(name="b_startup", description="Set the server language and where the bot should respond")
 @admin_or_manage_messages()
 async def setup_server(
     ctx,
@@ -282,7 +284,7 @@ async def setup_server(
 
     await ctx.respond(l10n.get('server_setup_success', language, channel=ctx.channel.mention))
 
-@bot.slash_command(name="usersetting", description="Set your language")
+@bot.slash_command(name="b_usersetting", description="Set your language")
 @allowed_channel()
 async def set_user_language(
     ctx,
@@ -297,7 +299,7 @@ async def set_user_language(
     conn.commit()
     await ctx.respond(l10n.get('user_setting_success', language), ephemeral=True)
 
-@bot.slash_command(name="notification", description="Set up your notifications")
+@bot.slash_command(name="b_notification", description="Set up your notifications")
 @allowed_channel()
 async def notification(
     ctx,
@@ -336,7 +338,7 @@ async def notification(
     else:
         await ctx.respond(l10n.get('species_not_found', lang), ephemeral=True)
 
-@bot.slash_command(name="delete_notifications", description="Delete your notifications")
+@bot.slash_command(name="b_delete_notifications", description="Delete your notifications")
 @allowed_channel()
 async def delete_notifications(ctx, ids: str):
     server_id = ctx.guild.id if ctx.guild else None
@@ -374,7 +376,7 @@ async def delete_notifications(ctx, ids: str):
         logging.error(f"Deleteerror: {e}")
         await ctx.respond(l10n.get('delete_error', lang), ephemeral=True)
 
-@bot.slash_command(name="stats", description="Show relevant statistics")
+@bot.slash_command(name="b_stats", description="Show relevant statistics")
 @allowed_channel()
 @admin_or_manage_messages()
 async def stats(ctx):
@@ -417,7 +419,9 @@ async def stats(ctx):
             top_species = [(l10n.get('no_data', lang), 0)]
 
         try:
-            stats_msg = l10n.get('stats_message', lang).format(
+            stats_msg = l10n.get(
+                'stats_message',
+                lang,
                 active=active,
                 completed=completed,
                 expired=expired,
@@ -437,7 +441,7 @@ async def stats(ctx):
         logging.error(f"Unexpected error in stats: {e}", exc_info=True)
         await ctx.respond(l10n.get('stats_error', lang))
 
-@bot.slash_command(name="history", description="Show your requests")
+@bot.slash_command(name="b_history", description="Show your requests")
 @allowed_channel()
 async def history(ctx):
     server_id = ctx.guild.id if ctx.guild else None
@@ -483,7 +487,7 @@ async def history(ctx):
         logging.error(f"Error in history: {e}")
         await ctx.respond(l10n.get('general_error', lang))
 
-@bot.slash_command(name="system", description="Show system info")
+@bot.slash_command(name="b_system", description="Show system info")
 @allowed_channel()
 @commands.has_permissions(administrator=True)
 async def system(ctx):
@@ -513,7 +517,7 @@ async def system(ctx):
         logging.error(f"Systemerror: {e}")
         await ctx.respond(l10n.get('system_error', lang))
 
-@bot.slash_command(name="help", description="All commands")
+@bot.slash_command(name="b_help", description="All commands")
 @allowed_channel()
 async def help(ctx):
     server_id = ctx.guild.id if ctx.guild else None
@@ -535,7 +539,7 @@ async def help(ctx):
         logging.error(f"Help error: {e}")
         await ctx.respond(l10n.get('general_error', lang))
 
-@bot.slash_command(name="testnotification", description="Test PN notifications")
+@bot.slash_command(name="b_testnotification", description="Test PN notifications")
 @allowed_channel()
 async def testnotification(ctx):
     server_id = ctx.guild.id if ctx.guild else None
@@ -574,7 +578,7 @@ async def update_bot_status():
     server_count = len(bot.guilds)
     user_count = sum(guild.member_count for guild in bot.guilds)
     status_message = (
-        f"Uptime: {uptime_days}d {uptime_hours}h {uptime_minutes}m | "
+        f"[BETA] - Uptime: {uptime_days}d {uptime_hours}h {uptime_minutes}m | "
         f"{server_count} Servers | {user_count} Users | "
         f"Bot-Version 2.0"
     )
