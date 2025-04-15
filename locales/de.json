@@ -22,6 +22,8 @@
     "history_active": "🔄 Aktiv:",
     "history_other": "❓ Sonstige:",
     "history_more_entries": "...und {count} weitere",
+	"history_entry": "{species} in {regions} (Erstellt: {created}) - [ID: {id}]",
+    "history_entry_completed": "{species} in {regions} (Erstellt: {created} | Benachrichtigt: {notified}) - [ID: {id}]",
     "system_status": "**🤖 Bot-Status**\nUptime: {uptime} \n\n**🔍 Datenbankstatus:** {integrity} \nGesamte Benachrichtigungen: {total} \n\n**📂 Shop-Daten:**\n {file_status}",
     "system_file_status": "🔄 Datei zuletzt aktualisiert: {modified} (vor {age})",
     "system_file_missing": "❌ Datei nicht gefunden",

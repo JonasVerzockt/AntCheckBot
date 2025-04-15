@@ -450,7 +450,7 @@ async def history(ctx):
     lang = get_user_lang(ctx.author.id, server_id)
 
     try:
-        cursor.execute("SELECT id, species, regions, status, created_at FROM notifications WHERE user_id=? ORDER BY created_at DESC", (str(ctx.author.id),))
+        cursor.execute("SELECT id, species, regions, status, created_at, notified_at FROM notifications WHERE user_id=? ORDER BY created_at DESC", (str(ctx.author.id),))
         history = cursor.fetchall()
 
         if not history:
@@ -479,7 +479,24 @@ async def history(ctx):
 
             history_msg += f"\n**{l10n.get(key, lang)}**\n"
             for entry in displayed:
-                history_msg += f"- {entry[1]} in {entry[2]} ({entry[4].split()[0]}) - [ID: {entry[0]}]\n"
+
+                created_date = entry[4].split()[0]
+                notified_date = entry[5].split()[0] if entry[5] else None
+    
+                params = {
+                    'species': entry[1],
+                    'regions': entry[2],
+                    'created': created_date,
+                    'id': entry[0]
+                }
+    
+                if entry[3].lower() == "completed" and notified_date:
+                    params['notified'] = notified_date
+                    entry_msg = l10n.get('history_entry_completed', lang, **params)
+                else:
+                    entry_msg = l10n.get('history_entry', lang, **params)
+    
+                history_msg += f"- {entry_msg}\n"
 
             if remaining > 0:
                 history_msg += l10n.get('history_more_entries', lang, count=remaining) + "\n"
