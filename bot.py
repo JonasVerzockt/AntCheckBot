@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS notifications (
     species TEXT,
     regions TEXT,
     status TEXT DEFAULT 'active',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     notified_at TIMESTAMP
 );
 
@@ -450,7 +450,8 @@ async def history(ctx):
     lang = get_user_lang(ctx.author.id, server_id)
 
     try:
-        cursor.execute("SELECT id, species, regions, status, created_at, notified_at FROM notifications WHERE user_id=? ORDER BY created_at DESC", (str(ctx.author.id),))
+        cursor.execute("SELECT id, species, regions, status, created_at, notified_at FROM notifications WHERE user_id=? ORDER BY created_at DESC",
+            (str(ctx.author.id),))
         history = cursor.fetchall()
 
         if not history:
