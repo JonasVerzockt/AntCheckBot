@@ -71,7 +71,7 @@ intents.message_content = True
 bot = discord.Bot(intents=intents)
 
 # SQLite-Datenbank mit Status-Spalte
-conn = sqlite3.connect("notifications.db")
+conn = sqlite3.connect("antcheckbot.db")
 cursor = conn.cursor()
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS notifications (
@@ -211,18 +211,17 @@ async def delete_notifications(ctx, ids: str):
             (str(ctx.author.id), *id_list)
         )
         user_ids = [row[0] for row in cursor.fetchall()]
-        
+
         if not user_ids:
             await ctx.respond("❌ Keine berechtigten Benachrichtigungen gefunden")
             return
 
-        # Löschvorgang
+
         cursor.execute(
             f"DELETE FROM notifications WHERE user_id=? AND id IN ({','.join(['?']*len(user_ids))})",
             (str(ctx.author.id), *user_ids)
         )
-        
-        # Globalen Zähler aktualisieren
+
         cursor.execute(
             "UPDATE global_stats SET value = value + ? WHERE key = 'deleted_notifications'",
             (len(user_ids),)
@@ -328,8 +327,9 @@ async def history(ctx):
 
 @bot.slash_command(name="notification", description="Richte eine Benachrichtigung ein")
 async def notification(ctx, species: str, regions: str, force: bool = False):
-    regions_list = [r.strip() for r in regions.split(",")]
-    valid_regions = [r for r in regions_list if any(s["country"] == r for s in SHOP_DATA.values())]
+    regions_list = [r.strip().lower() for r in regions.split(",")]
+    valid_regions = [r for r in regions_list if any(s["country"].lower() == r for s in SHOP_DATA.values())]
+
     if not valid_regions:
         available_regions = sorted({s["country"] for s in SHOP_DATA.values()})
         available_regions_str = ", ".join(available_regions)
@@ -340,8 +340,9 @@ async def notification(ctx, species: str, regions: str, force: bool = False):
 
     if species_found or force:
         try:
-            cursor.execute("INSERT INTO notifications (user_id, species, regions) VALUES (?, ?, ?)",
-                          (str(ctx.author.id), species, ",".join(valid_regions)))
+            cursor.execute(
+                "INSERT INTO notifications (user_id, species, regions) VALUES (?, ?, ?)",
+                (str(ctx.author.id), species, ",".join(valid_regions)))
             conn.commit()
 
             if not species_found:
@@ -376,7 +377,7 @@ async def system(ctx):
         integrity_check = cursor.execute("PRAGMA integrity_check").fetchone()[0]
 
         file_age, last_modified = get_file_age(SHOPS_DATA_FILE)
-        
+
         if file_age is not None:
             file_status = f"Letzte Änderung: {last_modified} ({file_age})"
         else:
