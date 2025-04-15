@@ -10,7 +10,7 @@ Description:
     Dieses Skript implementiert einen Discord-Bot mit verschiedenen Funktionen,
     darunter Benachrichtigungen, Statistiken und Systemstatus. Es verwendet SQLite
     zur Speicherung von Benachrichtigungen und JSON-Dateien für Shop-Daten.
-    Unterstützt Mehrsprachigkeit (de/en), Server- und Benutzereinstellungen sowie
+    Unterstützt Mehrsprachigkeit (de/en/eo), Server- und Benutzereinstellungen sowie
     kanalgebundene Befehle.
 
 Dependencies:
@@ -270,7 +270,7 @@ async def trigger_availability_check(user_id, species, regions):
 @admin_or_manage_messages()
 async def setup_server(
     ctx,
-    language: discord.Option(str, choices=["de", "en"], default="en")
+    language: discord.Option(str, choices=["de", "en", "eo"], default="en")
 ):
     server_id = ctx.guild.id
     channel_id = ctx.channel.id
@@ -290,7 +290,7 @@ async def setup_server(
 @allowed_channel()
 async def set_user_language(
     ctx,
-    language: discord.Option(str, choices=["de", "en"], default="en")
+    language: discord.Option(str, choices=["de", "en", "eo"], default="en")
 ):
     user_id = ctx.author.id
     cursor.execute("""
