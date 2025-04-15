@@ -578,7 +578,7 @@ async def update_bot_status():
     server_count = len(bot.guilds)
     user_count = sum(guild.member_count for guild in bot.guilds)
     status_message = (
-        f"[BETA] - Uptime: {uptime_days}d {uptime_hours}h {uptime_minutes}m | "
+        f"Uptime: {uptime_days}d {uptime_hours}h {uptime_minutes}m | "
         f"{server_count} Servers | {user_count} Users | "
         f"Bot-Version 2.0"
     )
