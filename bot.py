@@ -4,12 +4,14 @@
 """
 File: bot.py
 Author: Jonas Beier
-Date: 2025-04-11
-Version: 1.2
+Date: 2025-04-15
+Version: 2.0
 Description:
-    Dieses Skript implementiert einen Discord-Bot mit verschiedenen Funktionen, 
-    darunter Benachrichtigungen, Statistiken und Systemstatus. Es verwendet SQLite 
+    Dieses Skript implementiert einen Discord-Bot mit verschiedenen Funktionen,
+    darunter Benachrichtigungen, Statistiken und Systemstatus. Es verwendet SQLite
     zur Speicherung von Benachrichtigungen und JSON-Dateien für Shop-Daten.
+    Unterstützt Mehrsprachigkeit (de/en), Server- und Benutzereinstellungen sowie
+    kanalgebundene Befehle.
 
 Dependencies:
     - discord.py
@@ -36,15 +38,27 @@ import json
 import os
 import logging
 from datetime import datetime, timedelta
-from logging.handlers import RotatingFileHandler
 import asyncio
 import psutil
 import platform
-from datetime import timedelta
+from pathlib import Path
+from logging.handlers import RotatingFileHandler
 
-# Logging konfigurieren
+# Pfade und Konfiguration
+BASE_DIR = Path(__file__).parent
+LOCALES_DIR = BASE_DIR / "locales"
+TOKEN = "TOKEN"
+DATA_DIRECTORY = "PFAD"
+SHOPS_DATA_FILE = "shops_data.json"
+
+intents = discord.Intents.default()
+intents.messages = True
+intents.message_content = True
+bot = discord.Bot(intents=intents)
+
+# Log konfiguieren
 def setup_logger():
-    log_file = os.path.join(os.getcwd(), f"bot_log_{datetime.now().strftime('%Y%m%d')}.log")
+    log_file = BASE_DIR / f"bot_log_{datetime.now().strftime('%Y%m%d')}.log"
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
 
@@ -60,20 +74,23 @@ def setup_logger():
 
 setup_logger()
 
-# Bot-Konfiguration
-TOKEN = "TOKEN"
-DATA_DIRECTORY = "PFAD"
-SHOPS_DATA_FILE = "shops_data.json"
-
-intents = discord.Intents.default()
-intents.messages = True
-intents.message_content = True
-bot = discord.Bot(intents=intents)
-
-# SQLite-Datenbank mit Status-Spalte
-conn = sqlite3.connect("notifications.db")
+# Datenbankverbindung
+conn = sqlite3.connect(BASE_DIR / "antcheckbot.db")
 cursor = conn.cursor()
-cursor.execute("""
+
+# Tabellen erstellen
+cursor.executescript("""
+CREATE TABLE IF NOT EXISTS server_settings (
+    server_id INTEGER PRIMARY KEY,
+    channel_id INTEGER,
+    language TEXT DEFAULT 'en'
+);
+
+CREATE TABLE IF NOT EXISTS user_settings (
+    user_id INTEGER PRIMARY KEY,
+    language TEXT
+);
+
 CREATE TABLE IF NOT EXISTS notifications (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT,
@@ -81,38 +98,73 @@ CREATE TABLE IF NOT EXISTS notifications (
     regions TEXT,
     status TEXT DEFAULT 'active',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)
-""")
-cursor.execute("""
+);
+
 CREATE TABLE IF NOT EXISTS global_stats (
     key TEXT PRIMARY KEY,
     value INTEGER DEFAULT 0
-)
+);
+
+INSERT OR IGNORE INTO global_stats (key, value) VALUES ('deleted_notifications', 0);
 """)
-cursor.execute("INSERT OR IGNORE INTO global_stats (key, value) VALUES ('deleted_notifications', 0)")
 conn.commit()
 
-# Shop-Daten laden
-def load_shop_data():
-    shop_data = {}
-    try:
-        with open(SHOPS_DATA_FILE, "r") as f:
-            shops = json.load(f)
-            for shop in shops:
-                shop_id = shop["id"]
-                shop_data[shop_id] = {
-                    "country": shop["country"],
-                    "name": shop["name"],
-                    "url": shop["url"]
-                }
-        return shop_data
-    except FileNotFoundError:
-        logging.error(f"{SHOPS_DATA_FILE} nicht gefunden.")
-        return {}
+# Spracheinstellungen
+class Localization:
+    def __init__(self):
+        self.languages = {}
+        self.load_languages()
 
-SHOP_DATA = load_shop_data()
+    def load_languages(self):
+        for file in LOCALES_DIR.glob("*.json"):
+            lang = file.stem
+            with open(file, 'r', encoding='utf-8') as f:
+                self.languages[lang] = json.load(f)
 
-# Hilfsfunktionen
+    def get(self, key, lang='en', **kwargs):
+        try:
+            text = self.languages[lang][key]
+            return text.format(**kwargs)
+        except KeyError:
+            return self.languages['en'][key].format(**kwargs)
+
+l10n = Localization()
+
+def get_user_lang(user_id, server_id):
+    cursor.execute("SELECT language FROM user_settings WHERE user_id=?", (user_id,))
+    if user_lang := cursor.fetchone():
+        return user_lang[0]
+
+    cursor.execute("SELECT language FROM server_settings WHERE server_id=?", (server_id,))
+    if server_lang := cursor.fetchone():
+        return server_lang[0]
+
+    return 'en'
+
+# Hilfefunktionen und Decorators
+def get_server_channel(server_id):
+    cursor.execute("SELECT channel_id FROM server_settings WHERE server_id=?", (server_id,))
+    result = cursor.fetchone()
+    return result[0] if result else None
+
+def allowed_channel():
+    async def predicate(ctx):
+        if ctx.guild is None:
+            return True
+        allowed_channel_id = get_server_channel(ctx.guild.id)
+        if allowed_channel_id is None or ctx.channel.id == allowed_channel_id:
+            return True
+        lang = get_user_lang(ctx.author.id, ctx.guild.id)
+        await ctx.respond(l10n.get('wrong_channel', lang), ephemeral=True)
+        return False
+    return commands.check(predicate)
+
+def admin_or_manage_messages():
+    async def predicate(ctx):
+        perms = ctx.author.guild_permissions
+        return perms.administrator or perms.manage_messages
+    return commands.check(predicate)
+
 def species_exists(species):
     for filename in os.listdir(DATA_DIRECTORY):
         if filename.endswith(".json"):
@@ -123,6 +175,17 @@ def species_exists(species):
                     if "title" in product and product["title"].strip().lower() == species.lower():
                         return True
     return False
+
+def get_file_age(filename):
+    try:
+        modified = os.path.getmtime(filename)
+        age = datetime.now() - datetime.fromtimestamp(modified)
+        days = age.days
+        hours, remainder = divmod(age.seconds, 3600)
+        minutes = remainder // 60
+        return f"{days}d {hours}h {minutes}m", datetime.fromtimestamp(modified).strftime('%Y-%m-%d %H:%M:%S')
+    except FileNotFoundError:
+        return None, "File not found"
 
 def check_availability_for_species(species, regions):
     available_products = []
@@ -149,61 +212,140 @@ def check_availability_for_species(species, regions):
                             })
     return available_products
 
-def get_file_age(file_path):
+SHOP_DATA = {}
+def load_shop_data():
     try:
-        modification_time = os.path.getmtime(file_path)
-        modification_date = datetime.fromtimestamp(modification_time)
-
-        current_date = datetime.now()
-
-        time_difference = current_date - modification_date
-        age_hours, remainder = divmod(time_difference.seconds, 3600)
-        age_minutes = remainder // 60
-
-        if time_difference.days > 0:
-            return f"{time_difference.days} Tage alt", modification_date.strftime('%Y-%m-%d %H:%M:%S')
-        elif age_hours > 0:
-            return f"{age_hours} Stunden und {age_minutes} Minuten alt", modification_date.strftime('%Y-%m-%d %H:%M:%S')
-        else:
-            return f"{age_minutes} Minuten alt", modification_date.strftime('%Y-%m-%d %H:%M:%S')
+        with open(SHOPS_DATA_FILE, "r") as f:
+            shops = json.load(f)
+            return {shop["id"]: shop for shop in shops}
     except FileNotFoundError:
-        logging.error(f"Datei '{file_path}' nicht gefunden.")
-        return None, None
+        logging.error(f"{SHOPS_DATA_FILE} not found.")
+        return {}
 
-def admin_or_manage_messages():
-    async def predicate(ctx):
-        perms = ctx.author.guild_permissions
-        return perms.administrator or perms.manage_messages
-    return commands.check(predicate)
+SHOP_DATA = load_shop_data()
 
-# Kernfunktionen
 async def trigger_availability_check(user_id, species, regions):
-    regions_list = regions.split(",")
-    available_products = check_availability_for_species(species, regions_list)
-    if available_products:
-        try:
-            user = await bot.fetch_user(int(user_id))
-            for product in available_products:
-                message = (
-                    f"**Ameisenart:** {product['species']} - **Shop:** {product['shop_name']}\n"
-                    f"**Preis:** {product['min_price']} - {product['max_price']} {product['currency_iso']}\n"
-                    f"[Produkt URL](<{product['antcheck_url']}>) | [Shop-Startseite URL](<{product['shop_url']}>)\n"
-                )
-                await user.send(message)
+    try:
+        server_id = None
+        lang = get_user_lang(user_id, server_id)
+        regions_list = regions.split(",")
 
-            cursor.execute("UPDATE notifications SET status='completed' WHERE user_id=? AND species=? AND regions=?",
-                          (user_id, species, regions))
-            conn.commit()
-        except Exception as e:
-            logging.error(f"Fehler bei Verfügbarkeitsprüfung: {e}")
+        available = check_availability_for_species(species, regions_list)
+        if available:
+            user = await bot.fetch_user(int(user_id))
+
+            header = l10n.get('availability_header', lang, species=species)
+            message = f"{header}\n\n"
+
+            for product in available:
+                message += l10n.get('availability_entry', lang).format(
+                    species=product['species'],
+                    shop=product['shop_name'],
+                    min_price=product['min_price'],
+                    max_price=product['max_price'],
+                    currency=product['currency_iso'],
+                    product_url=product['antcheck_url'],
+                    shop_url=product['shop_url']
+                ) + "\n\n"
+
+            try:
+                await user.send(message)
+                cursor.execute(
+                    "UPDATE notifications SET status='completed' WHERE user_id=? AND species=?",
+                    (user_id, species)
+                )
+                conn.commit()
+            except discord.Forbidden:
+                logging.warning(f"DM failed for user {user_id}")
+
+    except Exception as e:
+        logging.error(f"Error in trigger_availability_check: {e}")
 
 # Befehle
-@bot.slash_command(name="delete_notifications", description="Lösche mehrere Benachrichtigungen")
+@bot.slash_command(name="startup", description="Set the server language and where the bot should respond")
+@admin_or_manage_messages()
+async def setup_server(
+    ctx,
+    language: discord.Option(str, choices=["de", "en"], default="en")
+):
+    server_id = ctx.guild.id
+    channel_id = ctx.channel.id
+
+    cursor.execute("""
+    INSERT INTO server_settings (server_id, channel_id, language)
+    VALUES (?, ?, ?)
+    ON CONFLICT(server_id) DO UPDATE SET
+        channel_id=excluded.channel_id,
+        language=excluded.language
+    """, (server_id, channel_id, language))
+    conn.commit()
+
+    await ctx.respond(l10n.get('server_setup_success', language, channel=ctx.channel.mention))
+
+@bot.slash_command(name="usersetting", description="Set your language")
+@allowed_channel()
+async def set_user_language(
+    ctx,
+    language: discord.Option(str, choices=["de", "en"], default="en")
+):
+    user_id = ctx.author.id
+    cursor.execute("""
+    INSERT INTO user_settings (user_id, language)
+    VALUES (?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET language=excluded.language
+    """, (user_id, language))
+    conn.commit()
+    await ctx.respond(l10n.get('user_setting_success', language), ephemeral=True)
+
+@bot.slash_command(name="notification", description="Set up your notifications")
+@allowed_channel()
+async def notification(
+    ctx,
+    species: str,
+    regions: str,
+    force: bool = False
+):
+    server_id = ctx.guild.id if ctx.guild else None
+    lang = get_user_lang(ctx.author.id, server_id)
+
+    regions_list = [r.strip().lower() for r in regions.split(",")]
+    valid_regions = [r for r in regions_list if any(s["country"].lower() == r for s in SHOP_DATA.values())]
+
+    if not valid_regions:
+        available_regions = sorted({s["country"].lower() for s in SHOP_DATA.values()})
+        available_regions_str = ", ".join(available_regions)
+        await ctx.respond(l10n.get('invalid_regions', lang, regions=available_regions_str), ephemeral=True)
+        return
+
+    species_found = species_exists(species)
+
+    if species_found or force:
+        try:
+            cursor.execute("""
+            INSERT INTO notifications (user_id, species, regions)
+            VALUES (?, ?, ?)
+            """, (str(ctx.author.id), species, ",".join(valid_regions)))
+            conn.commit()
+
+            response_key = 'notification_set_forced' if not species_found else 'notification_set'
+            await ctx.respond(l10n.get(response_key, lang, species=species, regions=", ".join(valid_regions)))
+
+            await trigger_availability_check(ctx.author.id, species, ",".join(valid_regions))
+        except sqlite3.IntegrityError:
+            await ctx.respond(l10n.get('notification_exists', lang), ephemeral=True)
+    else:
+        await ctx.respond(l10n.get('species_not_found', lang), ephemeral=True)
+
+@bot.slash_command(name="delete_notifications", description="Delete your notifications")
+@allowed_channel()
 async def delete_notifications(ctx, ids: str):
+    server_id = ctx.guild.id if ctx.guild else None
+    lang = get_user_lang(ctx.author.id, server_id)
+
     try:
         id_list = [int(i.strip()) for i in ids.split(",") if i.strip().isdigit()]
         if not id_list:
-            await ctx.respond("❌ Bitte kommagetrennte IDs angeben")
+            await ctx.respond(l10n.get('invalid_ids', lang), ephemeral=True)
             return
 
         cursor.execute(
@@ -211,229 +353,198 @@ async def delete_notifications(ctx, ids: str):
             (str(ctx.author.id), *id_list)
         )
         user_ids = [row[0] for row in cursor.fetchall()]
-        
+
         if not user_ids:
-            await ctx.respond("❌ Keine berechtigten Benachrichtigungen gefunden")
+            await ctx.respond(l10n.get('no_permission', lang), ephemeral=True)
             return
 
-        # Löschvorgang
         cursor.execute(
             f"DELETE FROM notifications WHERE user_id=? AND id IN ({','.join(['?']*len(user_ids))})",
             (str(ctx.author.id), *user_ids)
         )
-        
-        # Globalen Zähler aktualisieren
+
         cursor.execute(
             "UPDATE global_stats SET value = value + ? WHERE key = 'deleted_notifications'",
             (len(user_ids),)
         )
         conn.commit()
 
-        await ctx.respond(f"🗑️ Erfolgreich gelöscht: {', '.join(map(str, user_ids))}")
+        await ctx.respond(l10n.get('deleted_success', lang, ids=", ".join(map(str, user_ids))))
     except Exception as e:
-        logging.error(f"Löschfehler: {e}")
-        await ctx.respond("❌ Kritischer Fehler beim Löschen")
+        logging.error(f"Deleteerror: {e}")
+        await ctx.respond(l10n.get('delete_error', lang), ephemeral=True)
 
-@bot.slash_command(name="stats", description="Zeigt Benachrichtigungsstatistiken")
+@bot.slash_command(name="stats", description="Show relevant statistics")
+@allowed_channel()
 @admin_or_manage_messages()
 async def stats(ctx):
+    server_id = ctx.guild.id if ctx.guild else None
+    lang = get_user_lang(ctx.author.id, server_id)
+
     try:
-        cursor.execute("SELECT COUNT(*) FROM notifications WHERE status='active'")
+        cursor.execute("SELECT COALESCE(COUNT(*), 0) FROM notifications WHERE status='active'")
         active = cursor.fetchone()[0]
 
-        cursor.execute("SELECT COUNT(*) FROM notifications WHERE status='completed'")
+        cursor.execute("SELECT COALESCE(COUNT(*), 0) FROM notifications WHERE status='completed'")
         completed = cursor.fetchone()[0]
 
-        cursor.execute("SELECT COUNT(*) FROM notifications WHERE status='expired'")
+        cursor.execute("SELECT COALESCE(COUNT(*), 0) FROM notifications WHERE status='expired'")
         expired = cursor.fetchone()[0]
 
-        cursor.execute("SELECT species, COUNT(*) FROM notifications GROUP BY species ORDER BY COUNT(*) DESC LIMIT 5")
+        cursor.execute("""
+            SELECT COALESCE(species, 'unknown'), COUNT(*)
+            FROM notifications
+            GROUP BY species
+            ORDER BY COUNT(*) DESC
+            LIMIT 5
+        """)
         top_species = cursor.fetchall()
 
-        cursor.execute("SELECT value FROM global_stats WHERE key = 'deleted_notifications'")
+        cursor.execute("""
+            SELECT COALESCE(value, 0)
+            FROM global_stats
+            WHERE key = 'deleted_notifications'
+        """)
         deleted_total = cursor.fetchone()[0]
 
-        stats_msg = (
-            f"**📊 Statistik**\n"
-            f"Aktive Benachrichtigungen: {active}\n"
-            f"Abgeschlossene Benachrichtigungen: {completed}\n"
-            f"Abgelaufene Benachrichtigungen: {expired}\n"
-            f"**Global gelöscht:** {deleted_total}\n"
-            f"**Top 5 gesuchte Arten:**\n"
+        logging.info(
+            f"Stats values - Active: {active}, Completed: {completed}, "
+            f"Expired: {expired}, Deleted: {deleted_total}, "
+            f"Top Species: {top_species}"
         )
-        for species, count in top_species:
-            stats_msg += f"- {species}: {count} Anfragen\n"
+
+        if not top_species:
+            top_species = [(l10n.get('no_data', lang), 0)]
+
+        try:
+            stats_msg = l10n.get('stats_message', lang).format(
+                active=active,
+                completed=completed,
+                expired=expired,
+                deleted_total=deleted_total,
+                top_species="\n".join([f"- {s[0]}: {s[1]}" for s in top_species])
+            )
+        except KeyError as e:
+            logging.error(f"Missing localization key: {e}")
+            stats_msg = l10n.get('stats_error', lang)
 
         await ctx.respond(stats_msg)
-    except Exception as e:
-        logging.error(f"Fehler in stats: {e}")
-        await ctx.respond("Fehler beim Abrufen der Statistiken")
 
-@bot.slash_command(name="history", description="Zeigt deine Benachrichtigungshistorie")
+    except sqlite3.Error as e:
+        logging.error(f"Database error in stats: {e}")
+        await ctx.respond(l10n.get('stats_db_error', lang))
+    except Exception as e:
+        logging.error(f"Unexpected error in stats: {e}", exc_info=True)
+        await ctx.respond(l10n.get('stats_error', lang))
+
+@bot.slash_command(name="history", description="Show your requests")
+@allowed_channel()
 async def history(ctx):
+    server_id = ctx.guild.id if ctx.guild else None
+    lang = get_user_lang(ctx.author.id, server_id)
+
     try:
         cursor.execute("SELECT id, species, regions, status, created_at FROM notifications WHERE user_id=? ORDER BY created_at DESC", (str(ctx.author.id),))
         history = cursor.fetchall()
 
         if not history:
-            await ctx.respond("❌ Keine vergangenen Benachrichtigungen gefunden")
+            await ctx.respond(l10n.get('history_no_entries', lang))
             return
 
-        grouped_history = {
-            "completed": [],
-            "expired": [],
-            "active": [],
-            "other": []
+        grouped_history = {"completed": [], "expired": [], "active": [], "other": []}
+        for entry in history:
+            grouped_history[entry[3].lower() if entry[3] else "other"].append(entry)
+
+        history_msg = l10n.get('history_header', lang) + "\n"
+        status_map = {
+            "completed": ("history_completed", "✅"),
+            "expired": ("history_expired", "⏳"),
+            "active": ("history_active", "🔄"),
+            "other": ("history_other", "❓")
         }
 
-        for entry in history:
-            if entry[3] == "completed":
-                grouped_history["completed"].append(entry)
-            elif entry[3] == "expired":
-                grouped_history["expired"].append(entry)
-            elif entry[3] == "active":
-                grouped_history["active"].append(entry)
-            else:
-                grouped_history["other"].append(entry)
-
-        history_msg = "**📜 Deine Historie:**\n"
-
-        for status, entries in grouped_history.items():
+        for status, (key, emoji) in status_map.items():
+            entries = grouped_history.get(status, [])
             if not entries:
                 continue
 
-            if status == "completed":
-                status_emoji = "✅ Abgeschlossen:"
-            elif status == "expired":
-                status_emoji = "⏳ Abgelaufen:"
-            elif status == "active":
-                status_emoji = "🔄 Aktiv:"
-            else:
-                status_emoji = "❓ Sonstige:"
+            displayed = entries[:10]
+            remaining = len(entries) - 10
 
-            displayed_entries = entries[:10]
-            remaining_count = len(entries) - 10
-
-            history_msg += f"\n**{status_emoji}**\n"
-            for entry in displayed_entries:
+            history_msg += f"\n**{l10n.get(key, lang)}**\n"
+            for entry in displayed:
                 history_msg += f"- {entry[1]} in {entry[2]} ({entry[4].split()[0]}) - [ID: {entry[0]}]\n"
 
-            if remaining_count > 0:
-                history_msg += f"  ...und {remaining_count} weitere\n"
+            if remaining > 0:
+                history_msg += l10n.get('history_more_entries', lang, count=remaining) + "\n"
 
         await ctx.respond(history_msg)
     except Exception as e:
-        logging.error(f"Fehler in history: {e}")
-        await ctx.respond("Fehler beim Abrufen der Historie")
+        logging.error(f"Error in history: {e}")
+        await ctx.respond(l10n.get('general_error', lang))
 
-@bot.slash_command(name="notification", description="Richte eine Benachrichtigung ein")
-async def notification(ctx, species: str, regions: str, force: bool = False):
-    regions_list = [r.strip() for r in regions.split(",")]
-    valid_regions = [r for r in regions_list if any(s["country"] == r for s in SHOP_DATA.values())]
-    if not valid_regions:
-        available_regions = sorted({s["country"] for s in SHOP_DATA.values()})
-        available_regions_str = ", ".join(available_regions)
-        await ctx.respond(f"❌ Ungültige Regionen angegeben. Verfügbare Regionen sind: {available_regions_str}. [ISO 3166 ALPHA-2](<https://de.wikipedia.org/wiki/ISO-3166-1-Kodierliste>)")
-        return
-
-    species_found = species_exists(species)
-
-    if species_found or force:
-        try:
-            cursor.execute("INSERT INTO notifications (user_id, species, regions) VALUES (?, ?, ?)",
-                          (str(ctx.author.id), species, ",".join(valid_regions)))
-            conn.commit()
-
-            if not species_found:
-                await ctx.respond(f"⚠️ Art **{species}** wurde nicht gefunden, aber die Benachrichtigung wurde dennoch eingerichtet (Force-Modus aktiviert).")
-            else:
-                await ctx.respond(f"🔔 Benachrichtigung für **{species}** in {', '.join(valid_regions)} eingerichtet")
-
-            await trigger_availability_check(ctx.author.id, species, ",".join(valid_regions))
-        except sqlite3.IntegrityError:
-            await ctx.respond("❌ Diese Benachrichtigung existiert bereits exakt so schon.")
-    else:
-        await ctx.respond("❌ Art nicht gefunden, achte auf die korrekte Schreibweise oder diese Art ist noch nie gelistet worden.")
-
-@bot.slash_command(name="testnotification", description="Teste PN-Benachrichtigungen")
-async def testnotification(ctx):
-    try:
-        await ctx.author.send("📨 Testnachricht erfolgreich!")
-        await ctx.respond("✅ Testnachricht gesendet!", ephemeral=True)
-    except discord.Forbidden:
-        await ctx.respond("❌ Konnte keine PN senden - bitte Privatnachrichten aktivieren")
-
-@bot.slash_command(name="system", description="Zeigt den Status des Bots und des Systems")
-@admin_or_manage_messages()
+@bot.slash_command(name="system", description="Show system info")
+@allowed_channel()
+@commands.has_permissions(administrator=True)
 async def system(ctx):
-    try:
-        current_time = datetime.now()
-        uptime = current_time - bot.start_time
+    server_id = ctx.guild.id if ctx.guild else None
+    lang = get_user_lang(ctx.author.id, server_id)
 
+    try:
+        uptime = datetime.now() - bot.start_time
         cursor.execute("SELECT COUNT(*) FROM notifications")
-        total_notifications = cursor.fetchone()[0]
+        total = cursor.fetchone()[0]
+        integrity = cursor.execute("PRAGMA integrity_check").fetchone()[0]
 
-        integrity_check = cursor.execute("PRAGMA integrity_check").fetchone()[0]
-
-        file_age, last_modified = get_file_age(SHOPS_DATA_FILE)
-        
-        if file_age is not None:
-            file_status = f"Letzte Änderung: {last_modified} ({file_age})"
+        age, modified = get_file_age(SHOPS_DATA_FILE)
+        if age is None:
+            file_status = l10n.get('system_file_missing', lang)
         else:
-            file_status = "Datei nicht gefunden oder Fehler beim Lesen."
+            file_status = l10n.get('system_file_status', lang,
+                                 modified=modified,
+                                 age=age)
 
-        system_message = (
-            f"**🤖 Bot-Status**\n"
-            f"Uptime: {str(timedelta(seconds=uptime.total_seconds()))}\n\n"
-            f"**🔍 Datenbankstatus:** {integrity_check}\n"
-            f"Gesamte Benachrichtigungen in der DB: {total_notifications}\n\n"
-            f"**📂 Shop-Daten:**\n{file_status}\n"
-        )
-
-        await ctx.respond(system_message)
+        await ctx.respond(l10n.get('system_status', lang,
+                                 uptime=str(uptime).split('.')[0],
+                                 integrity=integrity,
+                                 total=total,
+                                 file_status=file_status))
     except Exception as e:
-        logging.error(f"Fehler im /system-Befehl: {e}")
-        await ctx.respond("❌ Fehler beim Abrufen des Status")
+        logging.error(f"Systemerror: {e}")
+        await ctx.respond(l10n.get('system_error', lang))
 
-@bot.slash_command(name="help", description="Zeigt alle Befehle an.")
+@bot.slash_command(name="help", description="All commands")
+@allowed_channel()
 async def help(ctx):
+    server_id = ctx.guild.id if ctx.guild else None
+    lang = get_user_lang(ctx.author.id, server_id)
+
     try:
-        help_message = (
-            f"`/notification`\n"
-            f"Beschreibung: Erstellt eine Benachrichtigung für eine bestimmte Ameisenart in spezifischen Regionen.\n"
-            f"Anforderungen:\n"
-            f"- `species`: Name der Ameisenart.\n"
-            f"- `regions`: Komma-separierte Liste von Regionen (z. B. de,ch).\n"
-            f"Verwendung: /notification species:<Ameisenart> regions:<Regionen>\n\n"
-            f"`/delete_notifications`\n"
-            f"Beschreibung: Löscht mehrere Benachrichtigungen anhand ihrer IDs (kommagetrennt)\n"
-            f"Verwendung: /delete_notifications ids:12,34,56\n\n"
-            f"`/history`\n"
-            f"Beschreibung: Zeigt die Historie der Benachrichtigungen des Nutzers.\n"
-            f"Anforderungen: Keine speziellen Berechtigungen erforderlich.\n"
-            f"Verwendung: /history\n\n"
-            f"`/testnotification`\n"
-            f"Beschreibung: Sendet eine Testnachricht an den Nutzer, um Benachrichtigungen zu testen.\n"
-            f"Anforderungen: Der Nutzer muss private Nachrichten aktiviert haben.\n"
-            f"Verwendung:  /testnotification\n\n"
-            f"`/stats`\n"
-            f"Beschreibung: Zeigt Statistiken zu aktiven und abgeschlossenen Benachrichtigungen sowie die Top 5 gesuchten Arten.\n"
-            f"Anforderungen: Nur Administratoren können diesen Befehl ausführen.\n"
-            f"Verwendung:  /stats\n\n"
-            f"`/system`\n"
-            f"Beschreibung: Zeigt die Uptime an und den Status der DB.\n"
-            f"Anforderungen: Nur Administratoren können diesen Befehl ausführen.\n"
-            f"Verwendung:  /system"
-        )
-
-        await ctx.respond(help_message)
-
+        commands = "\n".join([
+            l10n.get('help_notification', lang),
+            l10n.get('help_history', lang),
+            l10n.get('help_test', lang),
+            l10n.get('help_delete', lang),
+            l10n.get('help_stats', lang),
+            l10n.get('help_system', lang),
+            l10n.get('help_startup', lang),
+            l10n.get('help_usersetting', lang)
+        ])
+        await ctx.respond(l10n.get('help_full', lang, commands=commands))
     except Exception as e:
-        logging.error(f"Fehler im /help-Befehl: {e}")
-        await ctx.respond("❌ Fehler beim Abrufen der Hilfen")
+        logging.error(f"Help error: {e}")
+        await ctx.respond(l10n.get('general_error', lang))
 
-    finally:
-        logging.info("Der /help-Befehl wurde ausgeführt.")
+@bot.slash_command(name="testnotification", description="Test PN notifications")
+@allowed_channel()
+async def testnotification(ctx):
+    server_id = ctx.guild.id if ctx.guild else None
+    lang = get_user_lang(ctx.author.id, server_id)
+    try:
+        await ctx.author.send(l10n.get('testnotification_dm', lang))
+        await ctx.respond(l10n.get('testnotification_success', lang), ephemeral=True)
+    except discord.Forbidden:
+        await ctx.respond(l10n.get('testnotification_forbidden', lang), ephemeral=True)
 
 # Automatisierte Aufgaben
 @tasks.loop(hours=24)
@@ -441,11 +552,11 @@ async def clean_old_notifications():
     try:
         cutoff = datetime.now() - timedelta(days=365)
         cursor.execute("UPDATE notifications SET status='expired' WHERE created_at < ? AND status='active'",
-                       (cutoff.strftime('%Y-%m-%d'),))
+                      (cutoff.strftime('%Y-%m-%d'),))
         conn.commit()
-        logging.info(f"Alte Benachrichtigungen vor {cutoff.date()} als 'expired' markiert")
+        logging.info(f"Old notifications cleaned up")
     except Exception as e:
-        logging.error(f"Fehler bei Bereinigung: {e}")
+        logging.error(f"Error during cleanup: {e}")
 
 @tasks.loop(minutes=5)
 async def check_availability():
@@ -457,32 +568,27 @@ async def check_availability():
 async def update_bot_status():
     current_time = datetime.now()
     uptime = current_time - bot.start_time
-
     uptime_days = uptime.days
     uptime_hours, remainder = divmod(uptime.seconds, 3600)
     uptime_minutes, _ = divmod(remainder, 60)
-
     server_count = len(bot.guilds)
     user_count = sum(guild.member_count for guild in bot.guilds)
-
     status_message = (
         f"Uptime: {uptime_days}d {uptime_hours}h {uptime_minutes}m | "
-        f"{server_count} Servers | {user_count} Users"
+        f"{server_count} Servers | {user_count} Users | "
+        f"Bot-Version 2.0"
     )
-
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=status_message))
 
-# Bot-Events
 @bot.event
 async def on_ready():
     bot.start_time = datetime.now()
-    logging.info(f"Bot eingeloggt als {bot.user.name}")
+    logging.info(f"Bot online: {bot.user.name}")
     await bot.sync_commands()
-    print([command.name for command in bot.application_commands])
     clean_old_notifications.start()
     check_availability.start()
     update_bot_status.start()
 
-# Bot starten
 if __name__ == "__main__":
+    LOCALES_DIR.mkdir(exist_ok=True)
     bot.run(TOKEN)
