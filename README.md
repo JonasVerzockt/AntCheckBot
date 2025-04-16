@@ -1,4 +1,4 @@
-# AntCheckBot
+# AntCheckBot v3.0
 
 AntCheckBot ist ein Python-basierter Discord-Bot, der die Verfügbarkeit von Ameisenkolonien auf verschiedenen Online-Shops überwacht und Benachrichtigungen sendet. Der Bot verwendet die AntCheck-API, um Daten abzurufen.
 
@@ -8,22 +8,25 @@ AntCheckBot ist ein Python-basierter Discord-Bot, der die Verfügbarkeit von Ame
 
 ## Projektstruktur
 
-Das Projekt besteht aus zwei Hauptskripten:
+Das Projekt besteht aus mehreren Hauptkomponenten:
 
-- **`bot.py`**: Das Hauptskript für den Discord-Bot.
+- **`bot.py`**: Das Hauptskript für den Discord-Bot mit allen Slash-Commands, Events und Automatisierungen.
 - **`grabber.py`**: Skript zum Abrufen und Speichern von Shop- und Produktdaten von der AntCheck-API.
+- **`locales/`**: JSON-Dateien für Mehrsprachigkeit (`de.json`, `en.json`, `eo.json`).
+- **`config/`**: Konfigurationsdateien, z.B. API-Keys, Tokens.
 
 ---
 
-## Neue und erweiterte Funktionen (ab Version 2.0)
+## Neue und erweiterte Funktionen (ab Version 3.0)
 
 ### Mehrsprachigkeit & Einstellungen
-- **Mehrsprachigkeit:** Deutsch und Englisch, automatische Auswahl pro User/Server.
+- **Mehrsprachigkeit:** Deutsch, Englisch, Esperanto, automatische Auswahl pro User/Server.
 - **Serverweite Konfiguration:** Antwortkanal und Sprache via `/startup`.
-- **Benutzersprache:** Individuell einstellbar via `/usersetting`.
+- **Benutzersprache:** Individuell einstellbar via `/usersetting language`.
+- **Shop-Blacklist:** User können Shops auf eine persönliche Blacklist setzen, um keine Benachrichtigungen mehr für diese Shops zu erhalten.
 
 ### Benachrichtigungen & Verwaltung
-- **Slash-Command `/notification`:** Benachrichtigung für eine Ameisenart in bestimmten Regionen einrichten (mit Validierung und optionalem „force“-Modus).
+- **Slash-Command `/notification`:** Benachrichtigung für eine Ameisenart in bestimmten Regionen einrichten (mit Validierung, Blacklist-Prüfung und optionalem „force“-Modus).
 - **Sofortige Verfügbarkeitsprüfung** nach Setzen einer Benachrichtigung.
 - **Slash-Command `/delete_notifications`:** Löschen von Benachrichtigungen nach ID.
 - **Slash-Command `/history`:** Übersicht über eigene Benachrichtigungen, gruppiert nach Status (active, completed, expired).
@@ -50,15 +53,37 @@ Das Projekt besteht aus zwei Hauptskripten:
 
 | Befehl                    | Beschreibung                                                                                 | Wer?           |
 |---------------------------|---------------------------------------------------------------------------------------------|----------------|
-| `/startup`              | Setzt Sprache & Channel für den Server                                                      | Admin          |
-| `/usersetting`          | Setzt die Benutzersprache                                                                   | User           |
-| `/notification`         | Neue Benachrichtigung für Art & Region(en) einrichten                                       | User           |
-| `/delete_notifications`  | Löscht eigene Benachrichtigungen nach ID                                                    | User           |
-| `/history`              | Zeigt eigene Benachrichtigungen (Status: aktiv, abgeschlossen, abgelaufen)                  | User           |
-| `/testnotification`     | Testet private Nachrichten-Benachrichtigungen                                               | User           |
-| `/stats`                | Zeigt Statistiken und Top 5 Arten                                                           | Admin          |
-| `/system`               | Zeigt Systemstatus, Uptime, DB-Integrität, Shopdaten-Status                                 | Admin          |
-| `/help`                 | Zeigt alle verfügbaren Befehle                                                              | User           |
+| `/startup`                | Setzt Sprache & Channel für den Server                                                      | Admin          |
+| `/usersetting`            | Verwalte deine Sprache, Shop-Blacklist und persönliche Einstellungen                        | User           |
+| `/notification`           | Neue Benachrichtigung für Art & Region(en) einrichten                                       | User           |
+| `/delete_notifications`   | Löscht eigene Benachrichtigungen nach ID                                                    | User           |
+| `/history`                | Zeigt eigene Benachrichtigungen (Status: aktiv, abgeschlossen, abgelaufen)                  | User           |
+| `/testnotification`       | Testet private Nachrichten-Benachrichtigungen                                               | User           |
+| `/stats`                  | Zeigt Statistiken und Top 5 Arten                                                           | Admin          |
+| `/system`                 | Zeigt Systemstatus, Uptime, DB-Integrität, Shopdaten-Status                                 | Admin          |
+| `/help`                   | Zeigt alle verfügbaren Befehle                                                              | User           |
+
+---
+
+## `/usersetting` – Details
+
+**Beschreibung:**  
+Verwalte deine persönlichen Einstellungen für den Bot:
+
+- Lege deine Sprache für Bot-Antworten fest
+- Füge Shops zu deiner persönlichen Blacklist hinzu (du erhältst dann keine Benachrichtigungen mehr für diese Shops)
+- Entferne Shops aus deiner Blacklist
+- Zeige deine aktuelle Blacklist an
+- Zeige alle verfügbaren Shops an
+
+**Verwendung:**
+- `/usersetting language:<de|en|eo>` – Setze deine Sprache
+- `/usersetting blacklist_add shop:<Shopname>` – Füge einen Shop zur Blacklist hinzu
+- `/usersetting blacklist_remove shop:<Shopname>` – Entferne einen Shop aus der Blacklist
+- `/usersetting blacklist_list` – Zeige deine aktuelle Blacklist an
+- `/usersetting shop_list` – Zeige alle verfügbaren Shops an
+
+> Shopnamen werden bei der Blacklist-Funktion auch mit Tippfehler-Toleranz erkannt und du bekommst Vorschläge, falls ein Shop nicht eindeutig gefunden wird.
 
 ---
 
@@ -84,9 +109,11 @@ Dieses Skript ist für das Abrufen von Daten von der AntCheck-API und das Speich
 ## Verwendung
 
 1. Führe das `grabber.py`-Skript regelmäßig aus (z.B. alle 6 Stunden via Crontab), um Shop- und Produktdaten von der AntCheck-API abzurufen und zu speichern:
+
    python grabber.py
 
 2. Starte den Discord-Bot (z.B. in einer Screen-Session, damit er nach einem Reboot automatisch läuft):
+
    python bot.py
 
 3. Der Bot verbindet sich mit Discord und beginnt, auf Slash-Commands zu reagieren und Benachrichtigungen zu senden.
