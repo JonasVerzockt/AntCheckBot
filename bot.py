@@ -4,13 +4,13 @@
 """
 File: bot.py
 Author: Jonas Beier
-Date: 2025-04-15
-Version: 2.0
+Date: 2025-04-16
+Version: 3.0
 Description:
     Dieses Skript implementiert einen Discord-Bot mit verschiedenen Funktionen,
     darunter Benachrichtigungen, Statistiken und Systemstatus. Es verwendet SQLite
     zur Speicherung von Benachrichtigungen und JSON-Dateien für Shop-Daten.
-    Unterstützt Mehrsprachigkeit (de/en/eo), Server- und Benutzereinstellungen sowie
+    Unterstützt Mehrsprachigkeit (de/en), Server- und Benutzereinstellungen sowie
     kanalgebundene Befehle.
 
 Dependencies:
@@ -43,17 +43,19 @@ import psutil
 import platform
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
+from thefuzz import process
 
 # Pfade und Konfiguration
 BASE_DIR = Path(__file__).parent
 LOCALES_DIR = BASE_DIR / "locales"
 TOKEN = "TOKEN"
-DATA_DIRECTORY = "PFAD"
+DATA_DIRECTORY = "DIR"
 SHOPS_DATA_FILE = "shops_data.json"
 
 intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
+intents.members = True
 bot = discord.Bot(intents=intents)
 
 # Log konfiguieren
@@ -106,6 +108,23 @@ CREATE TABLE IF NOT EXISTS global_stats (
     value INTEGER DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS server_user_mappings (
+    user_id TEXT,
+    server_id INTEGER,
+    PRIMARY KEY (user_id, server_id)
+);
+
+CREATE TABLE IF NOT EXISTS user_shop_blacklist (
+    user_id TEXT,
+    shop_id TEXT,
+    PRIMARY KEY (user_id, shop_id),
+    FOREIGN KEY (user_id) REFERENCES notifications(user_id),
+    FOREIGN KEY (shop_id) REFERENCES shops(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_status ON notifications(status);
+
 INSERT OR IGNORE INTO global_stats (key, value) VALUES ('deleted_notifications', 0);
 """)
 conn.commit()
@@ -155,8 +174,6 @@ def allowed_channel():
         allowed_channel_id = get_server_channel(ctx.guild.id)
         if allowed_channel_id is None or ctx.channel.id == allowed_channel_id:
             return True
-        lang = get_user_lang(ctx.author.id, ctx.guild.id)
-        await ctx.respond(l10n.get('wrong_channel', lang), ephemeral=True)
         return False
     return commands.check(predicate)
 
@@ -188,8 +205,14 @@ def get_file_age(filename):
     except FileNotFoundError:
         return None, "File not found"
 
-def check_availability_for_species(species, regions):
+def check_availability_for_species(species, regions, user_id=None):
     available_products = []
+
+    blacklisted_shops = []
+    if user_id:
+        cursor.execute("SELECT shop_id FROM user_shop_blacklist WHERE user_id=?", (user_id,))
+        blacklisted_shops = [row[0] for row in cursor.fetchall()]
+
     for filename in os.listdir(DATA_DIRECTORY):
         if filename.endswith(".json"):
             file_path = os.path.join(DATA_DIRECTORY, filename)
@@ -198,7 +221,8 @@ def check_availability_for_species(species, regions):
                 for product in data:
                     if ("title" in product
                         and product["title"].strip().lower() == species.lower()
-                        and product.get("in_stock", False)):
+                        and product.get("in_stock", False)
+                        and product["shop_id"] not in blacklisted_shops):
                         shop_id = product["shop_id"]
                         if shop_id in SHOP_DATA and SHOP_DATA[shop_id]["country"] in regions:
                             available_products.append({
@@ -230,10 +254,22 @@ async def trigger_availability_check(user_id, species, regions):
         server_id = None
         lang = get_user_lang(user_id, server_id)
         regions_list = regions.split(",")
+        user = None
 
-        available = check_availability_for_species(species, regions_list)
+        available = check_availability_for_species(species, regions_list, user_id=str(user_id))
         if available:
-            user = await bot.fetch_user(int(user_id))
+            try:
+                user = await bot.fetch_user(int(user_id))
+            except discord.NotFound:
+                logging.error(f"User {user_id} not found")
+                return
+            except discord.HTTPException as e:
+                logging.error(f"HTTP error fetching user: {e}")
+                return
+
+            if not user:
+                logging.error(f"User {user_id} ist None")
+                return
 
             header = l10n.get('availability_header', lang, species=species)
             message = f"{header}\n\n"
@@ -254,41 +290,97 @@ async def trigger_availability_check(user_id, species, regions):
             try:
                 await user.send(message)
                 cursor.execute("""
-                    UPDATE notifications 
-                    SET status='completed', notified_at=CURRENT_TIMESTAMP 
+                    UPDATE notifications
+                    SET status='completed', notified_at=CURRENT_TIMESTAMP
                     WHERE user_id=? AND species=?
                 """, (user_id, species))
                 conn.commit()
             except discord.Forbidden:
                 logging.warning(f"DM failed for user {user_id}")
 
+            try:
+                cursor.execute("""
+                    SELECT DISTINCT server_id FROM server_user_mappings
+                    WHERE user_id=?
+                """, (user_id,))
+                servers = cursor.fetchall()
+
+                for (server_id,) in servers:
+                    lang = get_user_lang(user_id, server_id)
+
+                    channel_id = get_server_channel(server_id)
+                    channel = bot.get_channel(channel_id) if channel_id else None
+
+                    if not channel:
+                        guild = bot.get_guild(server_id)
+                        channel = guild.system_channel if guild else None
+
+                    if channel:
+                        try:
+                            await channel.send(
+                                f"<@{user_id}>, {l10n.get('dm_failed', lang)}\n"
+                                f"**Species:** {species}\n"
+                                f"**Regions:** {regions}"
+                            )
+                        except discord.Forbidden:
+                            logging.warning(f"No permissions in channel {channel.id}")
+                        except RateLimited as e:
+                            logging.warning(f"Rate limited in {server_id}: {e}")
+                    else:
+                        logging.warning(f"No channel available in server {server_id}")
+            except Exception as e:
+                logging.error(f"Error handling DM failure: {e}")
     except Exception as e:
         logging.error(f"Error in trigger_availability_check: {e}")
 
-# Befehle
-@bot.slash_command(name="startup", description="Set the server language and where the bot should respond")
-@admin_or_manage_messages()
-async def setup_server(
-    ctx,
-    language: discord.Option(str, choices=["de", "en", "eo"], default="en")
-):
-    server_id = ctx.guild.id
-    channel_id = ctx.channel.id
+async def notify_expired(user_id, species, regions, lang):
+    try:
+        user = await bot.fetch_user(int(user_id))
+        msg = l10n.get('notification_expired_dm', lang, species=species, regions=regions)
+        await user.send(msg)
+    except discord.Forbidden:
+        logging.warning(f"DM failed for expired notification to user {user_id}")
+    except Exception as e:
+        logging.error(f"Error in notify_expired: {e}")
 
-    cursor.execute("""
-    INSERT INTO server_settings (server_id, channel_id, language)
-    VALUES (?, ?, ?)
-    ON CONFLICT(server_id) DO UPDATE SET
-        channel_id=excluded.channel_id,
-        language=excluded.language
-    """, (server_id, channel_id, language))
+# Befehle
+@bot.slash_command(name="startup",description="Set the server language and where the bot should respond")
+@admin_or_manage_messages()
+async def setup_server(ctx,language: discord.Option(str, choices=["de", "en", "eo"], default="en"),channel: discord.Option(discord.TextChannel, "Channel for bot responses (optional)", required=False) = None):
+    server_id = ctx.guild.id
+    channel_id = channel.id if channel else None
+
+    if channel_id is not None:
+        cursor.execute("""
+            INSERT INTO server_settings (server_id, channel_id, language)
+            VALUES (?, ?, ?)
+            ON CONFLICT(server_id) DO UPDATE SET
+                channel_id=excluded.channel_id,
+                language=excluded.language
+        """, (server_id, channel_id, language))
+    else:
+        cursor.execute("""
+            INSERT INTO server_settings (server_id, language)
+            VALUES (?, ?)
+            ON CONFLICT(server_id) DO UPDATE SET
+                language=excluded.language
+        """, (server_id, language))
     conn.commit()
 
-    await ctx.respond(l10n.get('server_setup_success', language, channel=ctx.channel.mention))
+    await ctx.respond(
+    l10n.get(
+        'server_setup_success',
+        language,
+        channel=channel.mention if channel else l10n.get('all_channels', language)))
 
-@bot.slash_command(name="usersetting", description="Set your language")
+user_settings = bot.create_group(
+    name="usersetting",
+    description="Set your language or shop blacklist"
+)
+
+@user_settings.command(description="Set your language")
 @allowed_channel()
-async def set_user_language(
+async def language(
     ctx,
     language: discord.Option(str, choices=["de", "en", "eo"], default="en")
 ):
@@ -300,6 +392,119 @@ async def set_user_language(
     """, (user_id, language))
     conn.commit()
     await ctx.respond(l10n.get('user_setting_success', language), ephemeral=True)
+
+@user_settings.command(description="Add shop to blacklist")
+@allowed_channel()
+async def blacklist_add(
+    ctx,
+    shop: discord.Option(str, "Shop name or ID", required=True)
+):
+    user_id = str(ctx.author.id)
+    lang = get_user_lang(user_id, ctx.guild.id if ctx.guild else None)
+
+    shop_names = {s_id: s_data["name"] for s_id, s_data in SHOP_DATA.items()}
+    matches = process.extract(shop, shop_names.values(), limit=3)
+
+    best_match = next((match for match in matches if match[1] > 80), None)
+    if not best_match:
+        suggestions = "\n".join([f"- {m[0]}" for m in matches])
+        await ctx.respond(
+            l10n.get('shop_not_found_suggest', lang, shop=shop, suggestions=suggestions),
+            ephemeral=True
+        )
+        return
+
+    shop_name = best_match[0]
+    shop_id = next(s_id for s_id, name in shop_names.items() if name == shop_name)
+
+    try:
+        cursor.execute("""
+            INSERT INTO user_shop_blacklist (user_id, shop_id)
+            VALUES (?, ?)
+            ON CONFLICT(user_id, shop_id) DO NOTHING
+        """, (user_id, shop_id))
+        conn.commit()
+        await ctx.respond(
+            l10n.get('blacklist_add_success', lang, shop=shop_name),
+            ephemeral=True
+        )
+    except Exception as e:
+        logging.error(f"Blacklist-Add Error: {e}")
+        await ctx.respond(l10n.get('general_error', lang), ephemeral=True)
+
+@user_settings.command(description="Remove shop from blacklist")
+@allowed_channel()
+async def blacklist_remove(
+    ctx,
+    shop: discord.Option(str, "Shop name or ID", required=True)
+):
+    user_id = str(ctx.author.id)
+    lang = get_user_lang(user_id, ctx.guild.id if ctx.guild else None)
+
+    shop_names = {s_id: s_data["name"] for s_id, s_data in SHOP_DATA.items()}
+    matches = process.extract(shop, shop_names.values(), limit=3)
+
+    best_match = next((match for match in matches if match[1] > 80), None)
+    if not best_match:
+        suggestions = "\n".join([f"- {m[0]}" for m in matches])
+        await ctx.respond(
+            l10n.get('shop_not_found_suggest', lang, shop=shop, suggestions=suggestions),
+            ephemeral=True
+        )
+        return
+
+    shop_name = best_match[0]
+    shop_id = next(s_id for s_id, name in shop_names.items() if name == shop_name)
+
+    cursor.execute("""
+        DELETE FROM user_shop_blacklist
+        WHERE user_id=? AND shop_id=?
+    """, (user_id, shop_id))
+    conn.commit()
+
+    if cursor.rowcount > 0:
+        await ctx.respond(
+            l10n.get('blacklist_remove_success', lang, shop=shop_name),
+            ephemeral=True
+        )
+    else:
+        await ctx.respond(l10n.get('shop_not_in_blacklist', lang), ephemeral=True)
+
+@user_settings.command(description="List blacklisted shops")
+@allowed_channel()
+async def blacklist_list(ctx):
+    user_id = str(ctx.author.id)
+    lang = get_user_lang(user_id, ctx.guild.id if ctx.guild else None)
+
+    cursor.execute("""
+        SELECT shop_id FROM user_shop_blacklist
+        WHERE user_id=?
+    """, (user_id,))
+
+    shops = []
+    for row in cursor.fetchall():
+        shop_id = row[0]
+        if shop_id in SHOP_DATA:
+            shops.append(SHOP_DATA[shop_id]["name"])
+
+    if not shops:
+        await ctx.respond(l10n.get('blacklist_empty', lang), ephemeral=True)
+        return
+
+    await ctx.respond(
+        l10n.get('blacklist_list', lang, shops="\n- " + "\n- ".join(shops)),
+        ephemeral=True
+    )
+
+@user_settings.command(description="List all shops")
+@allowed_channel()
+async def shop_list(ctx):
+    lang = get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
+    shops = [s["name"] for s in SHOP_DATA.values()]
+    await ctx.respond(
+        l10n.get('available_shops', lang, shops="\n- " + "\n- ".join(shops)),
+        ephemeral=True
+    )
 
 @bot.slash_command(name="notification", description="Set up your notifications")
 @allowed_channel()
@@ -329,6 +534,13 @@ async def notification(
             INSERT INTO notifications (user_id, species, regions)
             VALUES (?, ?, ?)
             """, (str(ctx.author.id), species, ",".join(valid_regions)))
+
+            if server_id:
+                cursor.execute("""
+                    INSERT OR IGNORE INTO server_user_mappings (user_id, server_id)
+                    VALUES (?, ?)
+                """, (str(ctx.author.id), server_id))
+
             conn.commit()
 
             response_key = 'notification_set_forced' if not species_found else 'notification_set'
@@ -451,7 +663,7 @@ async def history(ctx):
 
     try:
         cursor.execute("SELECT id, species, regions, status, created_at, notified_at FROM notifications WHERE user_id=? ORDER BY created_at DESC",
-            (str(ctx.author.id),))
+         (str(ctx.author.id),))
         history = cursor.fetchall()
 
         if not history:
@@ -483,20 +695,20 @@ async def history(ctx):
 
                 created_date = entry[4].split()[0]
                 notified_date = entry[5].split()[0] if entry[5] else None
-    
+
                 params = {
                     'species': entry[1],
                     'regions': entry[2],
                     'created': created_date,
                     'id': entry[0]
                 }
-    
+
                 if entry[3].lower() == "completed" and notified_date:
                     params['notified'] = notified_date
                     entry_msg = l10n.get('history_entry_completed', lang, **params)
                 else:
                     entry_msg = l10n.get('history_entry', lang, **params)
-    
+
                 history_msg += f"- {entry_msg}\n"
 
             if remaining > 0:
@@ -509,7 +721,7 @@ async def history(ctx):
 
 @bot.slash_command(name="system", description="Show system info")
 @allowed_channel()
-@commands.has_permissions(administrator=True)
+@admin_or_manage_messages()
 async def system(ctx):
     server_id = ctx.guild.id if ctx.guild else None
     lang = get_user_lang(ctx.author.id, server_id)
@@ -528,11 +740,29 @@ async def system(ctx):
                                  modified=modified,
                                  age=age)
 
-        await ctx.respond(l10n.get('system_status', lang,
-                                 uptime=str(uptime).split('.')[0],
-                                 integrity=integrity,
-                                 total=total,
-                                 file_status=file_status))
+        latency = f"{bot.latency * 1000:.2f}"
+        cpu = f"{psutil.cpu_percent(interval=1):.1f}"
+        ram = f"{psutil.virtual_memory().percent:.1f}"
+        server_count = len(bot.guilds)
+        user_count = sum(guild.member_count for guild in bot.guilds)
+        system_info = f"{platform.system()} {platform.release()}"
+
+        msg = l10n.get('system_status', lang,
+                       uptime=str(uptime).split('.')[0],
+                       integrity=integrity,
+                       total=total,
+                       file_status=file_status)
+
+        perf_msg = l10n.get('system_performance', lang,
+                            latency=latency,
+                            cpu=cpu,
+                            ram=ram,
+                            servers=server_count,
+                            users=user_count,
+                            system=system_info)
+
+        await ctx.respond(f"{msg}\n\n{perf_msg}")
+
     except Exception as e:
         logging.error(f"Systemerror: {e}")
         await ctx.respond(l10n.get('system_error', lang))
@@ -571,14 +801,38 @@ async def testnotification(ctx):
         await ctx.respond(l10n.get('testnotification_forbidden', lang), ephemeral=True)
 
 # Automatisierte Aufgaben
+@tasks.loop(hours=168)
+async def optimize_db():
+    try:
+        cursor.execute("VACUUM;")
+        cursor.execute("PRAGMA optimize;")
+        conn.commit()
+        logging.info("VACUUM and OPTIMIZE completed successfully.")
+    except Exception as e:
+        logging.error(f"VACUUM/OPTIMIZE error: {e}")
+
 @tasks.loop(hours=24)
 async def clean_old_notifications():
     try:
         cutoff = datetime.now() - timedelta(days=365)
-        cursor.execute("UPDATE notifications SET status='expired' WHERE created_at < ? AND status='active'",
-                      (cutoff.strftime('%Y-%m-%d'),))
+        cursor.execute("""
+            SELECT id, user_id, species, regions
+            FROM notifications
+            WHERE created_at < ? AND status='active'
+        """, (cutoff.strftime('%Y-%m-%d'),))
+        expired = cursor.fetchall()
+
+        cursor.execute("""
+            UPDATE notifications SET status='expired'
+            WHERE created_at < ? AND status='active'
+        """, (cutoff.strftime('%Y-%m-%d'),))
         conn.commit()
-        logging.info(f"Old notifications cleaned up")
+
+        for notif_id, user_id, species, regions in expired:
+            lang = get_user_lang(user_id, None)
+            await notify_expired(user_id, species, regions, lang)
+
+        logging.info(f"Old notifications cleaned up and users notified")
     except Exception as e:
         logging.error(f"Error during cleanup: {e}")
 
@@ -600,7 +854,7 @@ async def update_bot_status():
     status_message = (
         f"Uptime: {uptime_days}d {uptime_hours}h {uptime_minutes}m | "
         f"{server_count} Servers | {user_count} Users | "
-        f"Bot-Version 2.0"
+        f"Bot-Version 3.0"
     )
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=status_message))
 
@@ -612,6 +866,18 @@ async def on_ready():
     clean_old_notifications.start()
     check_availability.start()
     update_bot_status.start()
+    psutil.cpu_percent(interval=None)
+    optimize_db.start()
+
+@bot.event
+async def on_application_command_error(ctx, error):
+    if isinstance(error, discord.errors.CheckFailure):
+
+        if not ctx.response.is_done():
+            lang = get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
+            await ctx.respond(l10n.get('no_permission', lang), ephemeral=True)
+    else:
+        logging.error(f"Command error: {error}", exc_info=True)
 
 if __name__ == "__main__":
     LOCALES_DIR.mkdir(exist_ok=True)
