@@ -5,7 +5,7 @@
 File: bot.py
 Author: Jonas Beier
 Date: 2025-04-17
-Version: 3.1
+Version: 3.2
 Description:
     Dieses Skript implementiert einen Discord-Bot mit verschiedenen Funktionen,
     darunter Benachrichtigungen, Statistiken und Systemstatus. Es verwendet SQLite
