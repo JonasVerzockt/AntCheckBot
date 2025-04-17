@@ -258,6 +258,29 @@ def load_shop_data():
 
 SHOP_DATA = load_shop_data()
 
+for shop in SHOP_DATA.values():
+    cursor.execute("""
+        INSERT OR REPLACE INTO shops (id, name, country, url)
+        VALUES (?, ?, ?, ?)
+    """, (shop["id"], shop["name"], shop["country"], shop["url"]))
+conn.commit()
+
+def reload_shops():
+    global SHOP_DATA
+    try:
+        with open(SHOPS_DATA_FILE, "r") as f:
+            shops = json.load(f)
+            SHOP_DATA = {shop["id"]: shop for shop in shops}
+            for shop in SHOP_DATA.values():
+                cursor.execute("""
+                    INSERT OR REPLACE INTO shops (id, name, country, url)
+                    VALUES (?, ?, ?, ?)
+                """, (shop["id"], shop["name"], shop["country"], shop["url"]))
+            conn.commit()
+            logging.info("Shop data reloaded and database updated.")
+    except Exception as e:
+        logging.error(f"Error reloading shop data: {e}")
+
 async def trigger_availability_check(user_id, species, regions):
     try:
         server_id = None
@@ -818,6 +841,13 @@ async def testnotification(ctx):
     except discord.Forbidden:
         await ctx.respond(l10n.get('testnotification_forbidden', lang), ephemeral=True)
 
+@bot.slash_command(name="reloadshops", description="Reload shop data from JSON file")
+@admin_or_manage_messages()
+@allowed_channel()
+async def reloadshops(ctx):
+    reload_shops()
+    await ctx.respond("Shop-Daten wurden neu geladen.", ephemeral=True)
+
 # Automatisierte Aufgaben
 @tasks.loop(hours=168)
 async def optimize_db():
@@ -854,6 +884,10 @@ async def clean_old_notifications():
     except Exception as e:
         logging.error(f"Error during cleanup: {e}")
 
+@tasks.loop(hours=1)
+async def reload_shops_task():
+    reload_shops()
+
 @tasks.loop(minutes=5)
 async def check_availability():
     cursor.execute("SELECT user_id, species, regions FROM notifications WHERE status='active'")
@@ -886,6 +920,7 @@ async def on_ready():
     update_bot_status.start()
     psutil.cpu_percent(interval=None)
     optimize_db.start()
+    reload_shops_task.start()
 
 @bot.event
 async def on_application_command_error(ctx, error):
