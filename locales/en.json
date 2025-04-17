@@ -5,6 +5,8 @@
     "notification_set": "🔔 Notification for {species} in {regions} set up",
     "notification_set_forced": "⚠️ Notification for {species} (force mode) set up",
     "notification_exists": "❌ This notification already exists",
+	"notification_exists_active": "❌ You already have an active notification for {species} in {regions}",
+	"notification_reactivated": "🔄 Notification for {species} in {regions} was reactivated",
     "species_not_found": "❌ Species not found",
     "invalid_regions": "❌ Invalid regions. Available: {regions}",
     "invalid_ids": "❌ Invalid IDs provided",

@@ -5,6 +5,8 @@
     "notification_set": "🔔 Benachrichtigung für {species} in {regions} eingerichtet",
     "notification_set_forced": "⚠️ Benachrichtigung für {species} (Force-Modus) eingerichtet",
     "notification_exists": "❌ Diese Benachrichtigung existiert bereits",
+	"notification_exists_active": "❌ Du hast bereits eine aktive Benachrichtigung für {species} in {regions}",
+	"notification_reactivated": "🔄 Die Benachrichtigung für {species} in {regions} wurde reaktiviert",
     "species_not_found": "❌ Art nicht gefunden",
     "invalid_regions": "❌ Ungültige Regionen. Verfügbare: {regions}",
     "invalid_ids": "❌ Ungültige IDs angegeben",

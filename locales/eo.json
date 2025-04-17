@@ -5,6 +5,8 @@
     "notification_set": "🔔 Sciigo pri {species} en {regions} agordita.",
     "notification_set_forced": "⚠️ Sciigo pri {species} (Deviga reĝimo) agordita.",
     "notification_exists": "❌ Ĉi tiu sciigo jam ekzistas.",
+	"notification_exists_active": "❌ Vi jam havas aktivan sciigon por {species} en {regions}",
+	"notification_reactivated": "🔄 La sciigo por {species} en {regions} estis reaktivigita",
     "species_not_found": "❌ Specio ne trovita.",
     "invalid_regions": "❌ Nevalidaj regionoj. Haveblaj: {regions}.",
     "invalid_ids": "❌ Nevalidaj ID-oj indikitaj.",
