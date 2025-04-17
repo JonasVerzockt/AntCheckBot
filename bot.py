@@ -97,7 +97,8 @@ CREATE TABLE IF NOT EXISTS shops (
     id TEXT PRIMARY KEY,
     name TEXT,
     country TEXT,
-    url TEXT
+    url TEXT,
+    average_rating REAL
 );
 
 CREATE TABLE IF NOT EXISTS notifications (
@@ -130,7 +131,7 @@ CREATE TABLE IF NOT EXISTS user_shop_blacklist (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_active_notification
-ON notifications(user_id, species, regions, status);
+ON notifications(user_id, species, regions) WHERE status='active';
 
 CREATE INDEX IF NOT EXISTS idx_notifications_status ON notifications(status);
 
@@ -194,8 +195,15 @@ def admin_or_manage_messages():
 
 def species_exists(species):
     for filename in os.listdir(DATA_DIRECTORY):
-        if filename.endswith(".json"):
+        if filename.startswith("products_shop_") and filename.endswith(".json"):
             file_path = os.path.join(DATA_DIRECTORY, filename)
+            try:
+                shop_id_from_filename = int(filename.split("_")[2].split(".")[0])
+            except Exception:
+                shop_id_from_filename = "unbekannt"
+            if not os.path.exists(file_path):
+                logging.warning(f"Product file '{file_path}' does not exist. Skip store ID {shop_id_from_filename}.")
+                continue
             with open(file_path, "r") as f:
                 data = json.load(f)
                 for product in data:
@@ -215,55 +223,92 @@ def get_file_age(filename):
         return None, "File not found"
 
 def check_availability_for_species(species, regions, user_id=None):
-    available_products = []
+    logger = logging.getLogger("availability")
+    logger.info(f"Start availability check for Art: '{species}', Regions: {regions}, User: {user_id}")
 
-    blacklisted_shops = []
-    if user_id:
-        cursor.execute("SELECT shop_id FROM user_shop_blacklist WHERE user_id=?", (user_id,))
-        blacklisted_shops = [row[0] for row in cursor.fetchall()]
+    blacklisted_shops = set()
+    if user_id is not None:
+        blacklisted_shops = get_blacklisted_shops(user_id)
+        logger.debug(f"Blacklist for users {user_id}: {blacklisted_shops}")
+
+    try:
+        with open("shops_data.json", "r", encoding="utf-8") as f:
+            shops_list = json.load(f)
+        SHOP_DATA = {shop["id"]: shop for shop in shops_list}
+        logger.info(f"{len(SHOP_DATA)} Shops geladen.")
+        logger.debug(f"Loaded store IDs: {list(SHOP_DATA.keys())}")
+    except Exception as e:
+        logger.error(f"Error loading the store data: {e}", exc_info=True)
+        return []
+
+    available_products = []
+    species_cf = species.strip().casefold()
 
     for filename in os.listdir(DATA_DIRECTORY):
-        if filename.endswith(".json"):
+        if filename.startswith("products_shop_") and filename.endswith(".json"):
             file_path = os.path.join(DATA_DIRECTORY, filename)
-            with open(file_path, "r") as f:
-                data = json.load(f)
-                for product in data:
-                    if ("title" in product
-                        and product["title"].strip().lower() == species.lower()
-                        and product.get("in_stock", False)
-                        and product["shop_id"] not in blacklisted_shops):
-                        shop_id = product["shop_id"]
-                        if shop_id in SHOP_DATA and SHOP_DATA[shop_id]["country"] in regions:
-                            available_products.append({
-                                "species": product["title"],
-                                "shop_name": SHOP_DATA[shop_id]["name"],
-                                "min_price": product["min_price"],
-                                "max_price": product["max_price"],
-                                "currency_iso": product["currency_iso"],
-                                "antcheck_url": product["antcheck_url"],
-                                "shop_url": SHOP_DATA[shop_id]["url"],
-                                "shop_id": shop_id
-                            })
+
+            try:
+                shop_id_from_filename = int(filename.split("_")[2].split(".")[0])
+                logger.debug(f"File name: {filename}, extracted store ID: {shop_id_from_filename}")
+            except Exception as e:
+                logger.warning(f"File name '{filename}' could not be parsed: {e}")
+                continue
+
+            shop_data = SHOP_DATA.get(shop_id_from_filename)
+            if not shop_data:
+                logger.warning(f"No store data record for store ID '{shop_id_from_filename}' found.")
+                continue
+
+            shop_country = shop_data.get("country", "").lower()
+            if shop_country not in [r.lower() for r in regions]:
+                logger.debug(f"Shop '{shop_data['name']}' ({shop_country}) not in target regions {regions}.")
+                continue
+
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except FileNotFoundError:
+                logger.warning(f"Product file '{file_path}' does not exist.")
+                continue
+            except Exception as e:
+                logger.error(f"Error loading the product file '{file_path}': {e}", exc_info=True)
+                continue
+
+            for product in data:
+                title = product.get("title", "").strip()
+                title_cf = title.casefold()
+                in_stock = product.get("in_stock", False)
+                product_shop_id = product.get("shop_id")
+
+                logger.debug(f"Check product: '{title}' | In Stock: {in_stock} | Shop-ID: {product_shop_id}")
+
+                if not title_cf.startswith(species_cf):
+                    logger.debug(f"Product '{title}' does not match search term '{species}' (startswith).")
+                    continue
+
+                if not in_stock:
+                    logger.debug(f"Product '{title}' not in stock.")
+                    continue
+
+                if product_shop_id in blacklisted_shops:
+                    logger.info(f"Shop '{product_shop_id}' for User {user_id} on blacklist, skipped.")
+                    continue
+
+                logger.info(f"Product available: '{title}' bei '{shop_data['name']}' ({shop_country}).")
+                available_products.append({
+                    "species": title,
+                    "shop_name": shop_data["name"],
+                    "min_price": product["min_price"],
+                    "max_price": product["max_price"],
+                    "currency_iso": product["currency_iso"],
+                    "antcheck_url": product["antcheck_url"],
+                    "shop_url": shop_data["url"],
+                    "shop_id": shop_id_from_filename
+                })
+
+    logger.info(f"Availability check completed. {len(available_products)} Products found.")
     return available_products
-
-SHOP_DATA = {}
-def load_shop_data():
-    try:
-        with open(SHOPS_DATA_FILE, "r") as f:
-            shops = json.load(f)
-            return {shop["id"]: shop for shop in shops}
-    except FileNotFoundError:
-        logging.error(f"{SHOPS_DATA_FILE} not found.")
-        return {}
-
-SHOP_DATA = load_shop_data()
-
-for shop in SHOP_DATA.values():
-    cursor.execute("""
-        INSERT OR REPLACE INTO shops (id, name, country, url)
-        VALUES (?, ?, ?, ?)
-    """, (shop["id"], shop["name"], shop["country"], shop["url"]))
-conn.commit()
 
 def reload_shops():
     global SHOP_DATA
@@ -281,89 +326,208 @@ def reload_shops():
     except Exception as e:
         logging.error(f"Error reloading shop data: {e}")
 
+def load_shop_data():
+    global SHOP_DATA
+    try:
+        cursor.execute("""
+            SELECT id, name, country, url, average_rating
+            FROM shops
+        """)
+        SHOP_DATA = {
+            row[0]: {
+                "id": row[0],
+                "name": row[1],
+                "country": row[2],
+                "url": row[3],
+                "average_rating": row[4]
+            } for row in cursor.fetchall()
+        }
+        logging.info(f"{len(SHOP_DATA)} Stores loaded from DB")
+    except Exception as e:
+        logging.error(f"Error when loading the stores: {e}")
+    return SHOP_DATA
+
+SHOP_DATA = load_shop_data()
+
+def load_shop_data_from_google_sheets():
+    import os
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    from googleapiclient.discovery import build
+    from googleapiclient.errors import HttpError
+
+    SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
+    SPREADSHEET_ID = '1Ymc8M5GHwfKbdh0QMRhZhL5zUK2wMRua0vk6v1MxiYE'
+    RANGE_NAME = 'Händler A-Z!A2:C'
+
+    creds = None
+    if os.path.exists('token.json'):
+        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open('token.json', 'w') as token:
+            token.write(creds.to_json())
+
+    try:
+        service = build('sheets', 'v4', credentials=creds)
+        sheet = service.spreadsheets()
+        result = sheet.values().get(spreadsheetId=SPREADSHEET_ID, range=RANGE_NAME).execute()
+        values = result.get('values', [])
+        print(values)
+        if not values:
+            print('No data found.')
+            return []
+        return values
+    except HttpError as err:
+        print(f'An error occurred: {err}')
+        return []
+
+def split_message(text, max_length=2000):
+    lines = text.split('\n')
+    blocks = []
+    current = ""
+    for line in lines:
+        if len(current) + len(line) + 1 > max_length:
+            blocks.append(current)
+            current = ""
+        current += line + "\n"
+    if current:
+        blocks.append(current)
+    return blocks
+
+def get_blacklisted_shops(user_id):
+    cursor.execute(
+        "SELECT shop_id FROM user_shop_blacklist WHERE user_id=?",
+        (user_id,)
+    )
+    return set(row[0] for row in cursor.fetchall())
+
+def get_shop_rating(shop_id):
+    cursor.execute("SELECT average_rating FROM shops WHERE id = ?", (shop_id,))
+    result = cursor.fetchone()
+    return result[0] if result else None
+
 async def trigger_availability_check(user_id, species, regions):
     try:
         server_id = None
         lang = get_user_lang(user_id, server_id)
-        regions_list = regions.split(",")
+        regions_list = regions.split(",") if isinstance(regions, str) else regions
+
+        try:
+            available = check_availability_for_species(species, regions_list, user_id=str(user_id))
+        except FileNotFoundError as e:
+            logging.error(f"Missing product file: {e.filename}")
+            return
+        except Exception as e:
+            logging.error(f"Error during availability check: {e}", exc_info=True)
+            return
+
+        if not available:
+            logging.info(f"No available products for {species} in {regions}")
+            return
+
         user = None
+        try:
+            user = await bot.fetch_user(int(user_id))
+        except discord.NotFound:
+            logging.error(f"User {user_id} not found.")
+            return
+        except discord.HTTPException as e:
+            logging.error(f"HTTP-Error: {e}")
+            return
 
-        available = check_availability_for_species(species, regions_list, user_id=str(user_id))
-        if available:
-            try:
-                user = await bot.fetch_user(int(user_id))
-            except discord.NotFound:
-                logging.error(f"User {user_id} not found")
-                return
-            except discord.HTTPException as e:
-                logging.error(f"HTTP error fetching user: {e}")
-                return
+        if not user:
+            logging.error(f"User {user_id} is None")
+            return
 
-            if not user:
-                logging.error(f"User {user_id} ist None")
-                return
+        header = l10n.get('availability_header', lang, species=species)
+        message = [header + "\n"]
 
-            header = l10n.get('availability_header', lang, species=species)
-            message = f"{header}\n\n"
+        for product in available:
+            shop_id = product['shop_id']
+            rating = get_shop_rating(product['shop_id'])
+            rating_str = f"⭐ {rating:.2f}" if rating else "❌"
 
-            for product in available:
-                message += l10n.get(
-                    'availability_entry',
-                    lang,
-                    species=product['species'],
-                    shop=product['shop_name'],
-                    min_price=product['min_price'],
-                    max_price=product['max_price'],
-                    currency=product['currency_iso'],
-                    product_url=product['antcheck_url'],
-                    shop_url=product['shop_url']
-                ) + "\n\n"
+            message.append(l10n.get(
+                'availability_entry',
+                lang,
+                species=product['species'],
+                shop=product['shop_name'],
+                min_price=product['min_price'],
+                max_price=product['max_price'],
+                currency=product['currency_iso'],
+                product_url=product['antcheck_url'],
+                shop_url=product['shop_url'],
+                rating=rating_str
+            ))
 
-            try:
-                await user.send(message)
-                cursor.execute("""
-                    UPDATE notifications
-                    SET status='completed', notified_at=CURRENT_TIMESTAMP
-                    WHERE user_id=? AND species=?
-                """, (user_id, species))
-                conn.commit()
-            except discord.Forbidden:
-                logging.warning(f"DM failed for user {user_id}")
+        try:
+            await user.send("\n\n".join(message))
+            cursor.execute("""
+                UPDATE notifications
+                SET status='completed', notified_at=CURRENT_TIMESTAMP
+                WHERE user_id=? AND species=?
+            """, (user_id, species))
+            conn.commit()
 
-            try:
-                cursor.execute("""
-                    SELECT DISTINCT server_id FROM server_user_mappings
-                    WHERE user_id=?
-                """, (user_id,))
-                servers = cursor.fetchall()
+        except discord.Forbidden:
+            logging.warning(f"DM failed for user {user_id}")
+            await handle_dm_failure(user_id, species, regions, lang)
+        except discord.HTTPException as e:
+            if hasattr(e, "status") and e.status == 429:
+                logging.warning(f"Rate limit reached: {e}")
+                await asyncio.sleep(e.retry_after)
+            else:
+                raise
+        except Exception as e:
+            logging.error(f"Error when sending the message: {e}")
 
-                for (server_id,) in servers:
-                    lang = get_user_lang(user_id, server_id)
-
-                    channel_id = get_server_channel(server_id)
-                    channel = bot.get_channel(channel_id) if channel_id else None
-
-                    if not channel:
-                        guild = bot.get_guild(server_id)
-                        channel = guild.system_channel if guild else None
-
-                    if channel:
-                        try:
-                            await channel.send(
-                                f"<@{user_id}>, {l10n.get('dm_failed', lang)}\n"
-                                f"**Species:** {species}\n"
-                                f"**Regions:** {regions}"
-                            )
-                        except discord.Forbidden:
-                            logging.warning(f"No permissions in channel {channel.id}")
-                        except RateLimited as e:
-                            logging.warning(f"Rate limited in {server_id}: {e}")
-                    else:
-                        logging.warning(f"No channel available in server {server_id}")
-            except Exception as e:
-                logging.error(f"Error handling DM failure: {e}")
     except Exception as e:
-        logging.error(f"Error in trigger_availability_check: {e}")
+        logging.error(f"Critical error: {e}", exc_info=True)
+        cursor.execute("""
+            UPDATE notifications
+            SET status='failed'
+            WHERE user_id=? AND species=?
+        """, (user_id, species))
+        conn.commit()
+
+async def handle_dm_failure(user_id, species, regions, lang):
+    try:
+        cursor.execute("""
+            SELECT DISTINCT server_id FROM server_user_mappings
+            WHERE user_id=?
+        """, (user_id,))
+        servers = cursor.fetchall()
+
+        for (server_id,) in servers:
+            channel_id = get_server_channel(server_id)
+            channel = bot.get_channel(channel_id) if channel_id else None
+
+            if not channel:
+                guild = bot.get_guild(server_id)
+                channel = guild.system_channel if guild else None
+
+            if channel:
+                try:
+                    await channel.send(
+                        f"<@{user_id}>, {l10n.get('dm_failed', lang)}\n"
+                        f"**Art:** {species}\n"
+                        f"**Regions:** {', '.join(regions)}"
+                    )
+                except discord.HTTPException as e:
+                    if hasattr(e, "status") and e.status == 429:
+                        logging.warning(f"Rate limit in channel {server_id}: {e}")
+                        await asyncio.sleep(e.retry_after)
+                    else:
+                        raise
+
+    except Exception as e:
+        logging.error(f"Error with DM fallback: {e}")
 
 async def notify_expired(user_id, species, regions, lang):
     try:
@@ -523,11 +687,24 @@ async def blacklist_list(ctx):
 @allowed_channel()
 async def shop_list(ctx):
     lang = get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
-    shops = [s["name"] for s in SHOP_DATA.values()]
-    await ctx.respond(
-        l10n.get('available_shops', lang, shops="\n- " + "\n- ".join(shops)),
-        ephemeral=True
+    shops_sorted = sorted(
+        SHOP_DATA.values(),
+        key=lambda s: (
+            s['average_rating'] is None,
+            -(s['average_rating'] if s['average_rating'] is not None else 0),
+            s['name'].lower()
+        )
     )
+    shops = [
+        f"{s['name']} - ⭐ {s['average_rating']:.2f}" if s.get('average_rating') is not None else f"{s['name']} - ❌"
+        for s in shops_sorted
+    ]
+    text = l10n.get('available_shops', lang, shops="\n- " + "\n- ".join(shops))
+    blocks = split_message(text)
+
+    await ctx.respond(blocks[0], ephemeral=True)
+    for block in blocks[1:]:
+        await ctx.followup.send(block, ephemeral=True)
 
 @bot.slash_command(name="notification", description="Set up your notifications")
 @allowed_channel()
@@ -551,7 +728,18 @@ async def notification(ctx, species: discord.Option(str, "Which species do you w
             cursor.execute("""
                 INSERT INTO notifications (user_id, species, regions, status)
                 VALUES (?, ?, ?, 'active')
+                ON CONFLICT(user_id, species, regions) WHERE status='active'
+                DO UPDATE SET created_at=CURRENT_TIMESTAMP
             """, (str(ctx.author.id), species, ",".join(valid_regions)))
+
+            is_new = cursor.rowcount == 1
+
+            if is_new:
+                response_key = 'notification_set_forced' if not species_found else 'notification_set'
+            else:
+                response_key = 'notification_reactivated'
+
+            await ctx.respond(l10n.get(response_key, lang, species=species, regions=", ".join(valid_regions)))
 
             if server_id:
                 cursor.execute("""
@@ -846,7 +1034,7 @@ async def testnotification(ctx):
 @allowed_channel()
 async def reloadshops(ctx):
     reload_shops()
-    await ctx.respond("Shop-Daten wurden neu geladen.", ephemeral=True)
+    await ctx.respond("Store data has been reloaded.", ephemeral=True)
 
 # Automatisierte Aufgaben
 @tasks.loop(hours=168)
@@ -858,6 +1046,25 @@ async def optimize_db():
         logging.info("VACUUM and OPTIMIZE completed successfully.")
     except Exception as e:
         logging.error(f"VACUUM/OPTIMIZE error: {e}")
+
+@tasks.loop(hours=48)
+async def sync_ratings():
+    try:
+        raw_data = load_shop_data_from_google_sheets()
+        for row in raw_data:
+            shop_name, _, rating = row
+            matches = process.extractOne(shop_name, [s["name"] for s in SHOP_DATA.values()])
+            if matches and matches[1] > 85:
+                shop_id = next(k for k,v in SHOP_DATA.items() if v["name"] == matches[0])
+                cursor.execute("""
+                    UPDATE shops
+                    SET average_rating = ?
+                    WHERE id = ?
+                """, (float(rating.replace(',', '.')), shop_id))
+        conn.commit()
+        load_shop_data()
+    except Exception as e:
+        logging.error(f"Rating sync failed: {e}")
 
 @tasks.loop(hours=24)
 async def clean_old_notifications():
@@ -921,6 +1128,8 @@ async def on_ready():
     psutil.cpu_percent(interval=None)
     optimize_db.start()
     reload_shops_task.start()
+    sync_ratings.start()
+    logging.info(f"Bot final loaded")
 
 @bot.event
 async def on_application_command_error(ctx, error):
