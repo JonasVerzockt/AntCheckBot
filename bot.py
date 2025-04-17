@@ -740,6 +740,7 @@ async def notification(ctx, species: discord.Option(str, "Which species do you w
                 response_key = 'notification_reactivated'
 
             await ctx.respond(l10n.get(response_key, lang, species=species, regions=", ".join(valid_regions)))
+            await asyncio.sleep(1)
 
             if server_id:
                 cursor.execute("""
@@ -751,7 +752,7 @@ async def notification(ctx, species: discord.Option(str, "Which species do you w
 
             response_key = 'notification_set_forced' if not species_found else 'notification_set'
             await ctx.respond(l10n.get(response_key, lang, species=species, regions=", ".join(valid_regions)))
-
+            await ctx.followup.send(l10n.get('checking_availability', lang, species=species))
             await trigger_availability_check(ctx.author.id, species, ",".join(valid_regions))
 
         except sqlite3.IntegrityError:
