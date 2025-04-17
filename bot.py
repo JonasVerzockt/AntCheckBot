@@ -346,7 +346,7 @@ async def notify_expired(user_id, species, regions, lang):
 # Befehle
 @bot.slash_command(name="startup",description="Set the server language and where the bot should respond")
 @admin_or_manage_messages()
-async def setup_server(ctx,language: discord.Option(str, choices=["de", "en", "eo"], default="en"),channel: discord.Option(discord.TextChannel, "Channel for bot responses (optional)", required=False) = None):
+async def setup_server(ctx, language: discord.Option(str, "Select the bot language (de = German, en = English, eo = Esperanto)", choices=["de", "en", "eo"], default="en"), channel: discord.Option(discord.TextChannel, "Channel for bot responses (optional)", required=False) = None):
     server_id = ctx.guild.id
     channel_id = channel.id if channel else None
 
@@ -380,10 +380,7 @@ user_settings = bot.create_group(
 
 @user_settings.command(description="Set your language")
 @allowed_channel()
-async def language(
-    ctx,
-    language: discord.Option(str, choices=["de", "en", "eo"], default="en")
-):
+async def language(ctx, language: discord.Option(str, "Select the bot language (de = German, en = English, eo = Esperanto)", choices=["de", "en", "eo"], default="en")):
     user_id = ctx.author.id
     cursor.execute("""
     INSERT INTO user_settings (user_id, language)
@@ -395,10 +392,7 @@ async def language(
 
 @user_settings.command(description="Add shop to blacklist")
 @allowed_channel()
-async def blacklist_add(
-    ctx,
-    shop: discord.Option(str, "Shop name or ID", required=True)
-):
+async def blacklist_add(ctx,shop: discord.Option(str, "Shop name or ID", required=True)):
     user_id = str(ctx.author.id)
     lang = get_user_lang(user_id, ctx.guild.id if ctx.guild else None)
 
@@ -434,10 +428,7 @@ async def blacklist_add(
 
 @user_settings.command(description="Remove shop from blacklist")
 @allowed_channel()
-async def blacklist_remove(
-    ctx,
-    shop: discord.Option(str, "Shop name or ID", required=True)
-):
+async def blacklist_remove(ctx,shop: discord.Option(str, "Shop name or ID", required=True)):
     user_id = str(ctx.author.id)
     lang = get_user_lang(user_id, ctx.guild.id if ctx.guild else None)
 
@@ -508,12 +499,7 @@ async def shop_list(ctx):
 
 @bot.slash_command(name="notification", description="Set up your notifications")
 @allowed_channel()
-async def notification(
-    ctx,
-    species: str,
-    regions: str,
-    force: bool = False
-):
+async def notification(ctx, species: discord.Option(str, "Which species do you want to be notified about?"), regions: discord.Option(str, "For which regions do you want notifications?"), force: discord.Option(bool, "Force notification even if already set", default=False)):
     server_id = ctx.guild.id if ctx.guild else None
     lang = get_user_lang(ctx.author.id, server_id)
 
@@ -554,7 +540,7 @@ async def notification(
 
 @bot.slash_command(name="delete_notifications", description="Delete your notifications")
 @allowed_channel()
-async def delete_notifications(ctx, ids: str):
+async def delete_notifications(ctx, ids: discord.Option(str, "Enter the IDs of the notifications to delete (comma-separated)")):
     server_id = ctx.guild.id if ctx.guild else None
     lang = get_user_lang(ctx.author.id, server_id)
 
