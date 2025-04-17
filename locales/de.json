@@ -56,5 +56,6 @@
     "shop_not_found_suggest": "Shop '{shop}' nicht gefunden. Meintest du:\n{suggestions}",
     "shop_not_in_blacklist": "Dieser Shop befindet sich nicht in deiner Blacklist",
     "available_shops": "Verfügbare Shops & [AAM-Rating](<https://discord.com/channels/375031723601297409/1281916830453203016>):\n- {shops}",
+    "checking_availability": "🔍 Prüfe sofort auf Verfügbarkeit von {species}...",
     "general_error": "❌ Ein Fehler ist aufgetreten"
 }

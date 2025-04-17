@@ -56,5 +56,6 @@
     "shop_not_found_suggest": "Butiko '{shop}' ne trovita. Ĉu vi celis:\n{suggestions}",
     "shop_not_in_blacklist": "Ĉi tiu butiko ne estas en via nigralisto",
     "available_shops": "Disponiblaj butikoj & [AAM-Rating](<https://discord.com/channels/375031723601297409/1281916830453203016>):\n- {shops}",
+    "checking_availability": "🔍 Kontrolas tuj haveblecon de {species}...",
     "general_error": "❌ Okazis eraro"
 }
