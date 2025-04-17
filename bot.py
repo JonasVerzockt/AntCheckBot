@@ -152,10 +152,10 @@ class Localization:
 
     def get(self, key, lang='en', **kwargs):
         try:
-            text = self.languages[lang][key]
-            return text.format(**kwargs)
-        except KeyError:
-            return self.languages['en'][key].format(**kwargs)
+            return self.languages[lang][key].format(**kwargs)
+        except KeyError as e:
+            logging.error(f"Missing placeholder {e} for key '{key}'")
+            return f"[ERROR: Missing data for {key}]"
 
 l10n = Localization()
 
@@ -588,7 +588,7 @@ async def notification(ctx, species: discord.Option(str, "Which species do you w
                     except sqlite3.IntegrityError:
                         await ctx.respond(l10n.get('notification_exists_active', lang), ephemeral=True)
             else:
-                await ctx.respond(l10n.get('notification_exists_active', lang), ephemeral=True)
+                await ctx.respond(l10n.get('notification_exists_active', lang, species=species), ephemeral=True)
 
     else:
         await ctx.respond(l10n.get('species_not_found', lang), ephemeral=True)
