@@ -576,7 +576,7 @@ async def notification(ctx, species: discord.Option(str, "Which species do you w
                 conn.commit()
 
                 if cursor.rowcount > 0:
-                    await ctx.respond(l10n.get('notification_reactivated', lang, species=species))
+                    await ctx.respond(l10n.get('notification_reactivated', lang, species=species, regions=regions))
                 else:
                     try:
                         cursor.execute("""
@@ -586,9 +586,9 @@ async def notification(ctx, species: discord.Option(str, "Which species do you w
                         conn.commit()
                         await ctx.respond(l10n.get('notification_set_forced', lang, species=species))
                     except sqlite3.IntegrityError:
-                        await ctx.respond(l10n.get('notification_exists_active', lang), ephemeral=True)
+                        await ctx.respond(l10n.get('notification_exists_active', lang, species=species, regions=regions, ephemeral=True))
             else:
-                await ctx.respond(l10n.get('notification_exists_active', lang, species=species), ephemeral=True)
+                await ctx.respond(l10n.get('notification_exists_active', lang, species=species, regions=regions, ephemeral=True))
 
     else:
         await ctx.respond(l10n.get('species_not_found', lang), ephemeral=True)
