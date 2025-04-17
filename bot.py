@@ -93,6 +93,13 @@ CREATE TABLE IF NOT EXISTS user_settings (
     language TEXT
 );
 
+CREATE TABLE IF NOT EXISTS shops (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    country TEXT,
+    url TEXT
+);
+
 CREATE TABLE IF NOT EXISTS notifications (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT,
@@ -122,7 +129,9 @@ CREATE TABLE IF NOT EXISTS user_shop_blacklist (
     FOREIGN KEY (shop_id) REFERENCES shops(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_active_notification
+ON notifications(user_id, species, regions, status);
+
 CREATE INDEX IF NOT EXISTS idx_notifications_status ON notifications(status);
 
 INSERT OR IGNORE INTO global_stats (key, value) VALUES ('deleted_notifications', 0);
@@ -517,8 +526,8 @@ async def notification(ctx, species: discord.Option(str, "Which species do you w
     if species_found or force:
         try:
             cursor.execute("""
-            INSERT INTO notifications (user_id, species, regions)
-            VALUES (?, ?, ?)
+                INSERT INTO notifications (user_id, species, regions, status)
+                VALUES (?, ?, ?, 'active')
             """, (str(ctx.author.id), species, ",".join(valid_regions)))
 
             if server_id:
@@ -533,8 +542,31 @@ async def notification(ctx, species: discord.Option(str, "Which species do you w
             await ctx.respond(l10n.get(response_key, lang, species=species, regions=", ".join(valid_regions)))
 
             await trigger_availability_check(ctx.author.id, species, ",".join(valid_regions))
+
         except sqlite3.IntegrityError:
-            await ctx.respond(l10n.get('notification_exists', lang), ephemeral=True)
+            if force:
+                cursor.execute("""
+                    UPDATE notifications
+                    SET created_at=CURRENT_TIMESTAMP
+                    WHERE user_id=? AND species=? AND regions=? AND status='active'
+                """, (str(ctx.author.id), species, ",".join(valid_regions)))
+                conn.commit()
+
+                if cursor.rowcount > 0:
+                    await ctx.respond(l10n.get('notification_reactivated', lang, species=species))
+                else:
+                    try:
+                        cursor.execute("""
+                            INSERT INTO notifications (user_id, species, regions, status)
+                            VALUES (?, ?, ?, 'active')
+                        """, (str(ctx.author.id), species, ",".join(valid_regions)))
+                        conn.commit()
+                        await ctx.respond(l10n.get('notification_set_forced', lang, species=species))
+                    except sqlite3.IntegrityError:
+                        await ctx.respond(l10n.get('notification_exists_active', lang), ephemeral=True)
+            else:
+                await ctx.respond(l10n.get('notification_exists_active', lang), ephemeral=True)
+
     else:
         await ctx.respond(l10n.get('species_not_found', lang), ephemeral=True)
 
