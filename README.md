@@ -1,6 +1,6 @@
-# AntCheckBot v3.0
+# AntCheckBot v3.5
 
-AntCheckBot ist ein Python-basierter Discord-Bot, der die Verfügbarkeit von Ameisenkolonien auf verschiedenen Online-Shops überwacht und Benachrichtigungen sendet. Der Bot verwendet die AntCheck-API, um Daten abzurufen.
+AntCheckBot ist ein Discord-Bot zur Benachrichtigung über verfügbare Ameisenarten in Online-Shops. Er bietet umfangreiche Mehrsprachigkeit, flexible Benachrichtigungsoptionen, Shop-Blacklist, Statistiken, Systeminfos und automatisierte Aufgaben. Die aktuelle Version nutzt SQLite und JSON für Datenhaltung und ist modular aufgebaut.
 
 [AntCheck API](https://antcheck.info/api) – Teste den Bot gerne auf meinem [TEST Discord](https://discord.gg/cYtz52MXph)!
 
@@ -13,112 +13,78 @@ Das Projekt besteht aus mehreren Hauptkomponenten:
 - **`bot.py`**: Das Hauptskript für den Discord-Bot mit allen Slash-Commands, Events und Automatisierungen.
 - **`grabber.py`**: Skript zum Abrufen und Speichern von Shop- und Produktdaten von der AntCheck-API.
 - **`locales/`**: JSON-Dateien für Mehrsprachigkeit (`de.json`, `en.json`, `eo.json`).
-- **`config/`**: Konfigurationsdateien, z.B. API-Keys, Tokens.
 
 ---
 
-## Neue und erweiterte Funktionen (ab Version 3.0)
+## Neue und erweiterte Funktionen (ab Version 3.5)
 
-### Mehrsprachigkeit & Einstellungen
-- **Mehrsprachigkeit:** Deutsch, Englisch, Esperanto, automatische Auswahl pro User/Server.
-- **Serverweite Konfiguration:** Antwortkanal und Sprache via `/startup`.
-- **Benutzersprache:** Individuell einstellbar via `/usersetting language`.
-- **Shop-Blacklist:** User können Shops auf eine persönliche Blacklist setzen, um keine Benachrichtigungen mehr für diese Shops zu erhalten.
+- **Mehrsprachigkeit:** Deutsch, Englisch, Esperanto (pro Server/Benutzer konfigurierbar)
+- **Benachrichtigungen:** Erhalte Infos, sobald eine gewünschte Art in bestimmten Regionen verfügbar ist
+- **Shop-Blacklist:** Schließe Shops individuell von Benachrichtigungen aus
+- **Shop-Ratings:** Automatischer Import und Anzeige von Shop-Bewertungen
+- **Statistiken & Systemstatus:** Umfangreiche Auswertungen für Admins
+- **Automatisierung:** Regelmäßige Datenaktualisierung, Datenbankpflege, Statusupdates
+- **Kanalbindung:** Befehle können auf einen Server-Channel beschränkt werden (Für das Mappen der Shops)
+- **Logging:** Rotierende Logfiles
 
-### Benachrichtigungen & Verwaltung
-- **Slash-Command `/notification`:** Benachrichtigung für eine Ameisenart in bestimmten Regionen einrichten (mit Validierung, Blacklist-Prüfung und optionalem „force“-Modus).
-- **Sofortige Verfügbarkeitsprüfung** nach Setzen einer Benachrichtigung.
-- **Slash-Command `/delete_notifications`:** Löschen von Benachrichtigungen nach ID.
-- **Slash-Command `/history`:** Übersicht über eigene Benachrichtigungen, gruppiert nach Status (active, completed, expired).
-- **Slash-Command `/testnotification`:** Testet private Nachrichten-Benachrichtigungen.
+## Setup
 
-### Statistiken & System
-- **Slash-Command `/stats`:** Zeigt Statistiken zu aktiven, abgeschlossenen, abgelaufenen und gelöschten Benachrichtigungen sowie die Top 5 gesuchten Arten (nur für Admins).
-- **Slash-Command `/system`:** Zeigt Uptime, Datenbank-Integrität, Gesamtanzahl der Benachrichtigungen und Status der Shop-Daten-Datei (nur für Admins).
+1. **Abhängigkeiten installieren:**
+pip install discord.py thefuzz psutil google-auth google-auth-oauthlib google-api-python-client
 
-### Automatisierte Aufgaben
-- **Tägliche Bereinigung:** Archiviert Benachrichtigungen, die älter als ein Jahr sind.
-- **Regelmäßige Verfügbarkeitsprüfung:** Überprüft alle aktiven Benachrichtigungen und sendet Nachrichten bei Verfügbarkeit.
-- **Automatisches Update des Bot-Status:** (Uptime, Server- und Useranzahl).
+2. **Konfiguration:**
+- `TOKEN` in `bot.py` mit deinem Discord-Bot-Token ersetzen
+- `DATA_DIRECTORY`, `SHOPS_DATA_FILE` und `SERVER_IDS` anpassen
 
-### Weitere Features
-- **Logging:** Mit Rotations-Logfiles.
-- **Datenbankstruktur:** Für Server- und Benutzereinstellungen, Benachrichtigungen und globale Statistiken.
-- **Kanalgebundene Befehle:** (nur im konfigurierten Channel nutzbar).
-- **Hilfefunktion `/help`:** Übersicht aller Befehle.
+3. **Starten:**
+python bot.py
+python grabber.py (Regelmäßig per Crontab)
 
----
+## Slash-Commands (Auswahl)
 
-## `bot.py` – Übersicht der wichtigsten Slash-Commands
+| Befehl                | Beschreibung                                                         | Wer?  |
+|-----------------------|-----------------------------------------------------------------------|-------|
+| `/startup`            | Sprache & Channel für Server setzen                                   | Admin |
+| `/usersetting language` | Eigene Sprache setzen                                              | User  |
+| `/usersetting blacklist_add` | Shop zur Blacklist hinzufügen                            | User  |
+| `/usersetting blacklist_remove` | Shop von Blacklist entfernen                         | User  |
+| `/usersetting blacklist_list` | Eigene Blacklist anzeigen                                | User  |
+| `/usersetting shop_list` | Alle Shops (optional nach Land) anzeigen                       | User  |
+| `/notification`       | Benachrichtigung für Art & Region einrichten                         | User  |
+| `/delete_notifications` | Eigene Benachrichtigungen löschen                                | User  |
+| `/history`            | Eigene Benachrichtigungen (Status: aktiv, abgeschlossen, abgelaufen) | User  |
+| `/testnotification`   | Test-PN senden                                                       | User  |
+| `/stats`              | Statistiken anzeigen                                                 | Admin |
+| `/system`             | System- und Performanceinfos anzeigen                                | Admin |
+| `/help`               | Übersicht aller Befehle                                              | User  |
+| `/reloadshops`        | Shopdaten neu laden                                                  | Admin |
+| `/shopmapping ...`    | Shop-Mappings für Google Sheets verwalten                            | Admin |
 
-| Befehl                    | Beschreibung                                                                                 | Wer?           |
-|---------------------------|---------------------------------------------------------------------------------------------|----------------|
-| `/startup`                | Setzt Sprache & Channel für den Server                                                      | Admin          |
-| `/usersetting`            | Verwalte deine Sprache, Shop-Blacklist und persönliche Einstellungen                        | User           |
-| `/notification`           | Neue Benachrichtigung für Art & Region(en) einrichten                                       | User           |
-| `/delete_notifications`   | Löscht eigene Benachrichtigungen nach ID                                                    | User           |
-| `/history`                | Zeigt eigene Benachrichtigungen (Status: aktiv, abgeschlossen, abgelaufen)                  | User           |
-| `/testnotification`       | Testet private Nachrichten-Benachrichtigungen                                               | User           |
-| `/stats`                  | Zeigt Statistiken und Top 5 Arten                                                           | Admin          |
-| `/system`                 | Zeigt Systemstatus, Uptime, DB-Integrität, Shopdaten-Status                                 | Admin          |
-| `/help`                   | Zeigt alle verfügbaren Befehle                                                              | User           |
+## Automatisierte Aufgaben
 
----
+- **Verfügbarkeitsprüfung:** Alle 5 Minuten für aktive Benachrichtigungen
+- **Shopdaten-Reload:** Stündlich
+- **Shop-Ratings Sync:** Alle 48 Stunden von Google Sheets
+- **Alte Benachrichtigungen:** Nach 1 Jahr automatisch als "expired" markiert und User benachrichtigt
+- **DB-Optimierung:** Wöchentlich
+- **Bot-Status:** Minütlich aktualisiert (Uptime, Server-/Userzahl)
 
-## `/usersetting` – Details
+## Datenbankstruktur
 
-**Beschreibung:**  
-Verwalte deine persönlichen Einstellungen für den Bot:
+- **server_settings:** Channel & Sprache pro Server
+- **user_settings:** Sprache pro User
+- **shops:** Shopdaten inkl. Bewertung
+- **notifications:** Benachrichtigungen (Status: active, completed, expired)
+- **user_shop_blacklist:** Blacklist pro User
+- **shop_name_mappings:** Zuordnung externer Shopnamen (Google Sheets) zu internen IDs
+- **global_stats:** Gesamtstatistiken (z. B. gelöschte Benachrichtigungen)
 
-- Lege deine Sprache für Bot-Antworten fest
-- Füge Shops zu deiner persönlichen Blacklist hinzu (du erhältst dann keine Benachrichtigungen mehr für diese Shops)
-- Entferne Shops aus deiner Blacklist
-- Zeige deine aktuelle Blacklist an
-- Zeige alle verfügbaren Shops an
+## Hinweise
 
-**Verwendung:**
-- `/usersetting language:<de|en|eo>` – Setze deine Sprache
-- `/usersetting blacklist_add shop:<Shopname>` – Füge einen Shop zur Blacklist hinzu
-- `/usersetting blacklist_remove shop:<Shopname>` – Entferne einen Shop aus der Blacklist
-- `/usersetting blacklist_list` – Zeige deine aktuelle Blacklist an
-- `/usersetting shop_list` – Zeige alle verfügbaren Shops an
-
-> Shopnamen werden bei der Blacklist-Funktion auch mit Tippfehler-Toleranz erkannt und du bekommst Vorschläge, falls ein Shop nicht eindeutig gefunden wird.
-
----
-
-## `grabber.py`
-
-Dieses Skript ist für das Abrufen von Daten von der AntCheck-API und das Speichern in JSON-Dateien zuständig.
-
-**Funktionen:**
-- Ruft Shop- und Produktdaten von der AntCheck-API ab.
-- Speichert die abgerufenen Daten in JSON-Dateien für die spätere Nutzung durch den Bot.
-
----
-
-## Konfiguration
-
-1. Stelle sicher, dass folgende Werte korrekt konfiguriert sind:
-   - `TOKEN`: Discord-Bot Token
-   - `DATA_DIRECTORY`: Pfad zum Verzeichnis mit Produktdaten
-   - `SHOPS_DATA_FILE`: JSON-Datei mit Shop-Daten
-
----
-
-## Verwendung
-
-1. Führe das `grabber.py`-Skript regelmäßig aus (z.B. alle 6 Stunden via Crontab), um Shop- und Produktdaten von der AntCheck-API abzurufen und zu speichern:
-
-   python grabber.py
-
-2. Starte den Discord-Bot (z.B. in einer Screen-Session, damit er nach einem Reboot automatisch läuft):
-
-   python bot.py
-
-3. Der Bot verbindet sich mit Discord und beginnt, auf Slash-Commands zu reagieren und Benachrichtigungen zu senden.
-
----
+- Die Datei `shops_data.json` und Produktdaten müssen regelmäßig aktuell gehalten werden.
+- Für Shop-Ratings wird ein Google Sheets Import unterstützt (siehe Funktion `load_shop_data_from_google_sheets`).
+- Alle Texte sind mehrsprachig in `locales/` als JSON abgelegt.
+- Für weitere Details zu Befehlen und Texten siehe `/help` im Bot.
 
 ## Lizenz
 
@@ -129,15 +95,5 @@ Dieses Projekt ist unter der [Creative Commons Attribution-NonCommercial 4.0 Int
 [cc-by-nc]: https://creativecommons.org/licenses/by-nc/4.0/
 [cc-by-nc-shield]: https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey.svg
 
----
-
-**Hinweis:**  
-Für Details zu allen Befehlen und deren Nutzung verwende `/help` direkt im Discord-Server.  
-Die vollständige Liste und Beschreibung aller Funktionen findest du im Quellcode (`bot.py`).
-
----
-
-## Kontakt
-
-Autor: Jonas Beier  
-GitHub-Profil: [JonasVerzockt](https://github.com/JonasVerzockt)
+**Autor:** Jonas Beier  
+**GitHub:** [JonasVerzockt](https://github.com/JonasVerzockt/)
