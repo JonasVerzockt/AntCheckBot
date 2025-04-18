@@ -51,7 +51,7 @@ LOCALES_DIR = BASE_DIR / "locales"
 TOKEN = "TOKEN"
 DATA_DIRECTORY = "DIR"
 SHOPS_DATA_FILE = "shops_data.json"
-SERVER_IDS = [375031723601297409, 1359846463966019706]
+SERVER_IDS = [ID1, ID2]
 
 intents = discord.Intents.default()
 intents.messages = True
