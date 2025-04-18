@@ -57,5 +57,13 @@
     "shop_not_in_blacklist": "Ĉi tiu butiko ne estas en via nigralisto",
     "available_shops": "Disponiblaj butikoj & [AAM-Rating](<https://discord.com/channels/375031723601297409/1281916830453203016>):\n- {shops}",
     "checking_availability": "🔍 Kontrolas tuj haveblecon de {species}...",
+    "shopmapping_add_invalid_id": "❌ Nevalida butiko-ID.",
+    "shopmapping_add_success": "✅ Mapado aldonita:\n`{external}` → `{id}` ({shop})",
+    "shopmapping_add_error": "❌ Eraro dum konservado.",
+    "shopmapping_show_none": "ℹ️ Neniu mapado trovita.",
+    "shopmapping_show_header": "**Aktualaj butiko-mapoj:**",
+    "shopmapping_show_entry": "- `{external}` → `{id}` ({shop})",
+    "shopmapping_remove_success": "✅ Mapado por `{external}` forigita.",
+    "shopmapping_remove_none": "ℹ️ Neniu mapado trovita.",
     "general_error": "❌ Okazis eraro"
 }

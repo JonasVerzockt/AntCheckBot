@@ -57,5 +57,13 @@
     "shop_not_in_blacklist": "This shop is not in your blacklist",
     "available_shops": "Available shops & [AAM-Rating](<https://discord.com/channels/375031723601297409/1281916830453203016>):\n- {shops}",
     "checking_availability": "🔍 Checking immediate availability for {species}...",
+    "shopmapping_add_invalid_id": "❌ Invalid shop ID.",
+    "shopmapping_add_success": "✅ Mapping added:\n`{external}` → `{id}` ({shop})",
+    "shopmapping_add_error": "❌ Error while saving.",
+    "shopmapping_show_none": "ℹ️ No mappings found.",
+    "shopmapping_show_header": "**Current shop mappings:**",
+    "shopmapping_show_entry": "- `{external}` → `{id}` ({shop})",
+    "shopmapping_remove_success": "✅ Mapping for `{external}` deleted.",
+    "shopmapping_remove_none": "ℹ️ No mapping found.",
     "general_error": "❌ An error has occurred"
 }

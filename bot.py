@@ -4,8 +4,8 @@
 """
 File: bot.py
 Author: Jonas Beier
-Date: 2025-04-17
-Version: 3.2
+Date: 2025-04-18
+Version: 3.5
 Description:
     Dieses Skript implementiert einen Discord-Bot mit verschiedenen Funktionen,
     darunter Benachrichtigungen, Statistiken und Systemstatus. Es verwendet SQLite
@@ -51,6 +51,7 @@ LOCALES_DIR = BASE_DIR / "locales"
 TOKEN = "TOKEN"
 DATA_DIRECTORY = "DIR"
 SHOPS_DATA_FILE = "shops_data.json"
+SERVER_IDS = [375031723601297409, 1359846463966019706]
 
 intents = discord.Intents.default()
 intents.messages = True
@@ -1064,21 +1065,21 @@ async def reloadshops(ctx):
 
 shopmapping = bot.create_group(
     name="shopmapping",
-    description="Verwalten von Shopnamen-Zuordnungen für Google Sheets-Importe!",
-    guild_ids=[375031723601297409]
+    description="Manage shop name mappings for Google Sheets imports!",
+    guild_ids=SERVER_IDS
 )
 
-@shopmapping.command(name="add", description="Zuordnung von externem Shopnamen zu interner ID")
+@shopmapping.command(name="add", description="Assign external shop name to internal ID")
 @admin_or_manage_messages()
 async def shopmapping_add(
     ctx,
-    external_name: discord.Option(str, "Name von Google Sheets"),
-    shop_id: discord.Option(str, "Interne Shop ID")
+    external_name: discord.Option(str, "Name from Google Sheets"),
+    shop_id: discord.Option(str, "Internal shop ID")
 ):
     lang = get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
 
     if shop_id not in SHOP_DATA:
-        await ctx.respond(f"❌ Ungültige Shop ID", ephemeral=True)
+        await ctx.respond(l10n("shopmapping_add_invalid_id", lang), ephemeral=True)
         return
 
     try:
@@ -1090,43 +1091,45 @@ async def shopmapping_add(
         conn.commit()
 
         await ctx.respond(
-            f"✅ Zuordnung hinzugefügt:\n`{external_name}` → `{shop_id}` ({SHOP_DATA[shop_id]['name']})",
+            l10n("shopmapping_add_success", lang, external=external_name, id=shop_id, shop=SHOP_DATA[shop_id]['name']),
             ephemeral=True
         )
     except Exception as e:
         logging.error(f"Shopmapping add error: {e}")
-        await ctx.respond("❌ Fehler beim Speichern.", ephemeral=True)
+        await ctx.respond(l10n("shopmapping_add_error", lang), ephemeral=True)
 
-@shopmapping.command(name="show", description="Zeige alle aktuellen Zuordnungen")
+@shopmapping.command(name="show", description="Show all current mappings")
 @admin_or_manage_messages()
 async def shopmapping_show(ctx):
+    lang = get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
     cursor.execute("SELECT * FROM shop_name_mappings")
     mappings = cursor.fetchall()
 
     if not mappings:
-        await ctx.respond("ℹ️ Keine passende Zuordnung gefunden.", ephemeral=True)
+        await ctx.respond(l10n("shopmapping_show_none", lang), ephemeral=True)
         return
 
-    msg = ["**Aktuelle Shop-Zuordnungen:**"]
+    msg = [l10n("shopmapping_show_header", lang)]
     for ext_name, shop_id in mappings:
         shop_name = SHOP_DATA.get(shop_id, {}).get('name', 'Unknown')
-        msg.append(f"- `{ext_name}` → `{shop_id}` ({shop_name})")
+        msg.append(l10n("shopmapping_show_entry", lang, external=ext_name, id=shop_id, shop=shop_name))
 
     await ctx.respond("\n".join(msg), ephemeral=True)
 
-@shopmapping.command(name="remove", description="Entfernen einer Shopzuordnung")
+@shopmapping.command(name="remove", description="Remove a shop mapping")
 @admin_or_manage_messages()
 async def shopmapping_remove(
     ctx,
-    external_name: discord.Option(str, "Name von Google Sheets")
+    external_name: discord.Option(str, "Name from Google Sheets")
 ):
+    lang = get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
     cursor.execute("DELETE FROM shop_name_mappings WHERE external_name=?", (external_name,))
     conn.commit()
 
     if cursor.rowcount > 0:
-        await ctx.respond(f"✅ Zuordnung für `{external_name}` gelöscht.", ephemeral=True)
+        await ctx.respond(l10n("shopmapping_remove_success", lang, external=external_name), ephemeral=True)
     else:
-        await ctx.respond("ℹ️ NKeine Zuordnung gefunden.", ephemeral=True)
+        await ctx.respond(l10n("shopmapping_remove_none", lang), ephemeral=True)
 
 # Automatisierte Aufgaben
 @tasks.loop(hours=168)
@@ -1225,7 +1228,7 @@ async def update_bot_status():
     status_message = (
         f"Uptime: {uptime_days}d {uptime_hours}h {uptime_minutes}m | "
         f"{server_count} Servers | {user_count} Users | "
-        f"Bot-Version 3.0"
+        f"Bot-Version 3.5"
     )
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=status_message))
 
