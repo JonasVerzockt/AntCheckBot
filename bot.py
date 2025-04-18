@@ -130,6 +130,12 @@ CREATE TABLE IF NOT EXISTS user_shop_blacklist (
     FOREIGN KEY (shop_id) REFERENCES shops(id)
 );
 
+CREATE TABLE IF NOT EXISTS shop_name_mappings (
+    external_name TEXT PRIMARY KEY,
+    shop_id TEXT,
+    FOREIGN KEY (shop_id) REFERENCES shops(id)
+);
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_active_notification
 ON notifications(user_id, species, regions) WHERE status='active';
 
@@ -685,20 +691,39 @@ async def blacklist_list(ctx):
 
 @user_settings.command(description="List all shops")
 @allowed_channel()
-async def shop_list(ctx):
+async def shop_list(
+    ctx,
+    country: discord.Option(str, "Filter shops by region code (e.g. 'de' for Germany, 'fr' for France). Leave empty to show all shops.", required=False) = None
+):
     lang = get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
-    shops_sorted = sorted(
-        SHOP_DATA.values(),
-        key=lambda s: (
-            s['average_rating'] is None,
-            -(s['average_rating'] if s['average_rating'] is not None else 0),
-            s['name'].lower()
-        )
-    )
-    shops = [
-        f"{s['name']} - ⭐ {s['average_rating']:.2f}" if s.get('average_rating') is not None else f"{s['name']} - ❌"
-        for s in shops_sorted
-    ]
+
+    def sort_key(s):
+        try:
+            avg = s['average_rating']
+            return (avg is None, -(avg if avg is not None else 0), s['name'].lower())
+        except KeyError:
+            return (True, 0, s['name'].lower())
+
+    if country:
+        shops_filtered = [s for s in SHOP_DATA.values() if s.get("country", "").lower() == country.lower()]
+    else:
+        shops_filtered = list(SHOP_DATA.values())
+
+    shops_sorted = sorted(shops_filtered, key=sort_key)
+
+    shops = []
+    for s in shops_sorted:
+        try:
+            avg = s['average_rating']
+            rating_str = f"⭐ {avg:.2f}" if avg is not None else "❌"
+        except KeyError:
+            rating_str = "❌"
+        shops.append(f"`{s['id']}` | {s['name']} - {rating_str}")
+
+    if not shops:
+        await ctx.respond(l10n.get('no_shops_found', lang), ephemeral=True)
+        return
+
     text = l10n.get('available_shops', lang, shops="\n- " + "\n- ".join(shops))
     blocks = split_message(text)
 
@@ -1037,6 +1062,72 @@ async def reloadshops(ctx):
     reload_shops()
     await ctx.respond("Store data has been reloaded.", ephemeral=True)
 
+shopmapping = bot.create_group(
+    name="shopmapping",
+    description="Verwalten von Shopnamen-Zuordnungen für Google Sheets-Importe!",
+    guild_ids=[375031723601297409]
+)
+
+@shopmapping.command(name="add", description="Zuordnung von externem Shopnamen zu interner ID")
+@admin_or_manage_messages()
+async def shopmapping_add(
+    ctx,
+    external_name: discord.Option(str, "Name von Google Sheets"),
+    shop_id: discord.Option(str, "Interne Shop ID")
+):
+    lang = get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
+
+    if shop_id not in SHOP_DATA:
+        await ctx.respond(f"❌ Ungültige Shop ID", ephemeral=True)
+        return
+
+    try:
+        cursor.execute("""
+            INSERT INTO shop_name_mappings (external_name, shop_id)
+            VALUES (?, ?)
+            ON CONFLICT(external_name) DO UPDATE SET shop_id=excluded.shop_id
+        """, (external_name.strip(), shop_id))
+        conn.commit()
+
+        await ctx.respond(
+            f"✅ Zuordnung hinzugefügt:\n`{external_name}` → `{shop_id}` ({SHOP_DATA[shop_id]['name']})",
+            ephemeral=True
+        )
+    except Exception as e:
+        logging.error(f"Shopmapping add error: {e}")
+        await ctx.respond("❌ Fehler beim Speichern.", ephemeral=True)
+
+@shopmapping.command(name="show", description="Zeige alle aktuellen Zuordnungen")
+@admin_or_manage_messages()
+async def shopmapping_show(ctx):
+    cursor.execute("SELECT * FROM shop_name_mappings")
+    mappings = cursor.fetchall()
+
+    if not mappings:
+        await ctx.respond("ℹ️ Keine passende Zuordnung gefunden.", ephemeral=True)
+        return
+
+    msg = ["**Aktuelle Shop-Zuordnungen:**"]
+    for ext_name, shop_id in mappings:
+        shop_name = SHOP_DATA.get(shop_id, {}).get('name', 'Unknown')
+        msg.append(f"- `{ext_name}` → `{shop_id}` ({shop_name})")
+
+    await ctx.respond("\n".join(msg), ephemeral=True)
+
+@shopmapping.command(name="remove", description="Entfernen einer Shopzuordnung")
+@admin_or_manage_messages()
+async def shopmapping_remove(
+    ctx,
+    external_name: discord.Option(str, "Name von Google Sheets")
+):
+    cursor.execute("DELETE FROM shop_name_mappings WHERE external_name=?", (external_name,))
+    conn.commit()
+
+    if cursor.rowcount > 0:
+        await ctx.respond(f"✅ Zuordnung für `{external_name}` gelöscht.", ephemeral=True)
+    else:
+        await ctx.respond("ℹ️ NKeine Zuordnung gefunden.", ephemeral=True)
+
 # Automatisierte Aufgaben
 @tasks.loop(hours=168)
 async def optimize_db():
@@ -1052,16 +1143,36 @@ async def optimize_db():
 async def sync_ratings():
     try:
         raw_data = load_shop_data_from_google_sheets()
+
+        cursor.execute("SELECT external_name, shop_id FROM shop_name_mappings")
+        all_mappings = cursor.fetchall()
+
         for row in raw_data:
             shop_name, _, rating = row
-            matches = process.extractOne(shop_name, [s["name"] for s in SHOP_DATA.values()])
-            if matches and matches[1] > 85:
-                shop_id = next(k for k,v in SHOP_DATA.items() if v["name"] == matches[0])
-                cursor.execute("""
-                    UPDATE shops
-                    SET average_rating = ?
-                    WHERE id = ?
-                """, (float(rating.replace(',', '.')), shop_id))
+            shop_id = None
+
+            for ext_name, mapped_id in all_mappings:
+                if ext_name.casefold() == shop_name.casefold():
+                    shop_id = mapped_id
+                    break
+
+            if not shop_id:
+                matches = process.extractOne(
+                    shop_name,
+                    [s["name"] for s in SHOP_DATA.values()],
+                    scorer=process.fuzz.token_sort_ratio
+                )
+                if matches and matches[1] > 75:
+                    shop_id = next(k for k,v in SHOP_DATA.items() if v["name"] == matches[0])
+                else:
+                    continue
+
+            cursor.execute("""
+                UPDATE shops
+                SET average_rating = ?
+                WHERE id = ?
+            """, (float(rating.replace(',', '.')), shop_id))
+
         conn.commit()
         load_shop_data()
     except Exception as e:
