@@ -2,7 +2,7 @@
 
 AntCheckBot ist ein Discord-Bot zur Benachrichtigung über verfügbare Ameisenarten in Online-Shops. Er bietet umfangreiche Mehrsprachigkeit, flexible Benachrichtigungsoptionen, Shop-Blacklist, Statistiken, Systeminfos und automatisierte Aufgaben. Die aktuelle Version nutzt SQLite und JSON für Datenhaltung und ist modular aufgebaut.
 
-[AntCheck API](https://antcheck.info/api) – Teste den Bot gerne auf meinem [TEST Discord](https://discord.gg/cYtz52MXph)!
+[AntCheck API](https://antcheck.info/api) – Teste den Bot gerne auf meinem [TEST Discord](https://discord.gg/cYtz52MXph)! - [BOT](https://top.gg/de/bot/1359846733059850442) einladen!
 
 ---
 
