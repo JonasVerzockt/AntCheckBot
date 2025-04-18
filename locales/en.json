@@ -65,5 +65,7 @@
     "shopmapping_show_entry": "- `{external}` → `{id}` ({shop})",
     "shopmapping_remove_success": "✅ Mapping for `{external}` deleted.",
     "shopmapping_remove_none": "ℹ️ No mapping found.",
+	"help_reloadshops": "/reloadshops — Reload shop data from JSON file",
+    "help_shopmapping": "/shopmapping — Manage shop name mappings for Google Sheets imports!",
     "general_error": "❌ An error has occurred"
 }

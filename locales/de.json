@@ -65,5 +65,7 @@
     "shopmapping_show_entry": "- `{external}` → `{id}` ({shop})",
     "shopmapping_remove_success": "✅ Zuordnung für `{external}` gelöscht.",
     "shopmapping_remove_none": "ℹ️ Keine Zuordnung gefunden.",
+    "help_reloadshops": "/reloadshops — Shop-Daten aus der JSON-Datei neu laden",
+    "help_shopmapping": "/shopmapping — Shopnamen-Zuordnungen für Google Sheets-Importe verwalten!",
     "general_error": "❌ Ein Fehler ist aufgetreten"
 }

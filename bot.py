@@ -1038,7 +1038,9 @@ async def help(ctx):
             l10n.get('help_stats', lang),
             l10n.get('help_system', lang),
             l10n.get('help_startup', lang),
-            l10n.get('help_usersetting', lang)
+            l10n.get('help_usersetting', lang),
+            l10n.get('help_reloadshops', lang),
+            l10n.get('help_shopmapping', lang)
         ])
         await ctx.respond(l10n.get('help_full', lang, commands=commands))
     except Exception as e:

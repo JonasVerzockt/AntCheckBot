@@ -65,5 +65,7 @@
     "shopmapping_show_entry": "- `{external}` → `{id}` ({shop})",
     "shopmapping_remove_success": "✅ Mapado por `{external}` forigita.",
     "shopmapping_remove_none": "ℹ️ Neniu mapado trovita.",
+    "help_reloadshops": "/reloadshops — Reŝargi butiko-datumojn el JSON-dosiero",
+    "help_shopmapping": "/shopmapping — Administri butikonoma mapojn por Google Sheets-importoj!",
     "general_error": "❌ Okazis eraro"
 }
