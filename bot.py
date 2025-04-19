@@ -52,6 +52,7 @@ TOKEN = "TOKEN"
 DATA_DIRECTORY = "DIR"
 SHOPS_DATA_FILE = "shops_data.json"
 SERVER_IDS = [ID1, ID2]
+BOT_OWNER = USERID
 
 intents = discord.Intents.default()
 intents.messages = True
@@ -135,6 +136,17 @@ CREATE TABLE IF NOT EXISTS shop_name_mappings (
     external_name TEXT PRIMARY KEY,
     shop_id TEXT,
     FOREIGN KEY (shop_id) REFERENCES shops(id)
+);
+
+CREATE TABLE IF NOT EXISTS server_info (
+    server_id INTEGER PRIMARY KEY,
+    server_name VARCHAR(100) NOT NULL,
+    member_count INTEGER NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    icon_url TEXT,
+    splash_url TEXT,
+    banner_url TEXT,
+    description TEXT
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_active_notification
@@ -418,6 +430,44 @@ def get_shop_rating(shop_id):
     cursor.execute("SELECT average_rating FROM shops WHERE id = ?", (shop_id,))
     result = cursor.fetchone()
     return result[0] if result else None
+
+def owner_only():
+    async def predicate(ctx):
+        return ctx.author.id == BOT_OWNER
+    return commands.check(predicate)
+
+def get_guild_info(guild):
+    return (
+        guild.id,
+        guild.name,
+        guild.member_count,
+        guild.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+        str(guild.icon.url) if guild.icon else None,
+        str(guild.splash.url) if guild.splash else None,
+        str(guild.banner.url) if guild.banner else None,
+        guild.description or None
+    )
+
+async def update_server_info(guild):
+    data = get_guild_info(guild)
+    
+    cursor.execute("""
+        INSERT INTO server_info (
+            server_id, server_name, member_count, 
+            created_at, icon_url, splash_url, 
+            banner_url, description
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(server_id) DO UPDATE SET
+            server_name=excluded.server_name,
+            member_count=excluded.member_count,
+            created_at=excluded.created_at,
+            icon_url=excluded.icon_url,
+            splash_url=excluded.splash_url,
+            banner_url=excluded.banner_url,
+            description=excluded.description
+    """, data)
+    conn.commit()
 
 async def trigger_availability_check(user_id, species, regions):
     try:
@@ -852,7 +902,7 @@ async def delete_notifications(ctx, ids: discord.Option(str, "Enter the IDs of t
 async def stats(ctx):
     server_id = ctx.guild.id if ctx.guild else None
     lang = get_user_lang(ctx.author.id, server_id)
-
+    
     try:
         cursor.execute("SELECT COALESCE(COUNT(*), 0) FROM notifications WHERE status='active'")
         active = cursor.fetchone()[0]
@@ -981,7 +1031,9 @@ async def history(ctx):
 async def system(ctx):
     server_id = ctx.guild.id if ctx.guild else None
     lang = get_user_lang(ctx.author.id, server_id)
-
+    server_count = len(bot.guilds)
+    user_count = sum(guild.member_count for guild in bot.guilds)
+    
     try:
         uptime = datetime.now() - bot.start_time
         cursor.execute("SELECT COUNT(*) FROM notifications")
@@ -1005,6 +1057,7 @@ async def system(ctx):
 
         msg = l10n.get('system_status', lang,
                        uptime=str(uptime).split('.')[0],
+                       server_count=server_count
                        integrity=integrity,
                        total=total,
                        file_status=file_status)
@@ -1081,7 +1134,7 @@ async def shopmapping_add(
     lang = get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
 
     if shop_id not in SHOP_DATA:
-        await ctx.respond(l10n("shopmapping_add_invalid_id", lang), ephemeral=True)
+        await ctx.respond(l10n.get("shopmapping_add_invalid_id", lang), ephemeral=True)
         return
 
     try:
@@ -1093,12 +1146,12 @@ async def shopmapping_add(
         conn.commit()
 
         await ctx.respond(
-            l10n("shopmapping_add_success", lang, external=external_name, id=shop_id, shop=SHOP_DATA[shop_id]['name']),
+            l10n.get("shopmapping_add_success", lang, external=external_name, id=shop_id, shop=SHOP_DATA[shop_id]['name']),
             ephemeral=True
         )
     except Exception as e:
         logging.error(f"Shopmapping add error: {e}")
-        await ctx.respond(l10n("shopmapping_add_error", lang), ephemeral=True)
+        await ctx.respond(l10n.get("shopmapping_add_error", lang), ephemeral=True)
 
 @shopmapping.command(name="show", description="Show all current mappings")
 @admin_or_manage_messages()
@@ -1108,13 +1161,13 @@ async def shopmapping_show(ctx):
     mappings = cursor.fetchall()
 
     if not mappings:
-        await ctx.respond(l10n("shopmapping_show_none", lang), ephemeral=True)
+        await ctx.respond(l10n.get("shopmapping_show_none", lang), ephemeral=True)
         return
 
-    msg = [l10n("shopmapping_show_header", lang)]
+    msg = [l10n.get("shopmapping_show_header", lang)]
     for ext_name, shop_id in mappings:
         shop_name = SHOP_DATA.get(shop_id, {}).get('name', 'Unknown')
-        msg.append(l10n("shopmapping_show_entry", lang, external=ext_name, id=shop_id, shop=shop_name))
+        msg.append(l10n.get("shopmapping_show_entry", lang, external=ext_name, id=shop_id, shop=shop_name))
 
     await ctx.respond("\n".join(msg), ephemeral=True)
 
@@ -1129,9 +1182,37 @@ async def shopmapping_remove(
     conn.commit()
 
     if cursor.rowcount > 0:
-        await ctx.respond(l10n("shopmapping_remove_success", lang, external=external_name), ephemeral=True)
+        await ctx.respond(l10n.get("shopmapping_remove_success", lang, external=external_name), ephemeral=True)
     else:
-        await ctx.respond(l10n("shopmapping_remove_none", lang), ephemeral=True)
+        await ctx.respond(l10n.get("shopmapping_remove_none", lang), ephemeral=True)
+
+@bot.slash_command(name="serverlist", description="Zeigt alle Serverinfos (nur für Botbesitzer)")
+@owner_only()
+async def serverlist(ctx):
+    if ctx.author.id != BOT_OWNER:
+        lang = get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
+        await ctx.respond(l10n.get('no_permission', lang), ephemeral=True)
+        return
+
+    lang = get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
+
+    messages = []
+    for guild in bot.guilds:
+        info = (
+            f"**{guild.name}**\n"
+            f"{l10n.get('serverlist_id', lang)}: `{guild.id}`\n"
+            f"{l10n.get('serverlist_members', lang)}: {guild.member_count}\n"
+            f"{l10n.get('serverlist_icon', lang)}: {guild.icon.url if guild.icon else l10n.get('serverlist_no_icon', lang)}\n"
+            f"{l10n.get('serverlist_splash', lang)}: {guild.splash.url if guild.splash else l10n.get('serverlist_no_splash', lang)}\n"
+            f"{l10n.get('serverlist_banner', lang)}: {guild.banner.url if guild.banner else l10n.get('serverlist_no_banner', lang)}\n"
+            f"{l10n.get('serverlist_description', lang)}: {guild.description or l10n.get('serverlist_no_description', lang)}\n"
+            f"{l10n.get('serverlist_created', lang)}: {guild.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            "---------------------------"
+        )
+        messages.append(info)
+
+    for block in split_message("\n".join(messages)):
+        await ctx.respond(block, ephemeral=True)
 
 # Automatisierte Aufgaben
 @tasks.loop(hours=168)
@@ -1208,6 +1289,11 @@ async def clean_old_notifications():
     except Exception as e:
         logging.error(f"Error during cleanup: {e}")
 
+@tasks.loop(hours=2)
+async def update_server_infos():
+    for guild in bot.guilds:
+        await update_server_info(guild)
+
 @tasks.loop(hours=1)
 async def reload_shops_task():
     reload_shops()
@@ -1228,10 +1314,7 @@ async def update_bot_status():
     server_count = len(bot.guilds)
     user_count = sum(guild.member_count for guild in bot.guilds)
     status_message = (
-        f"Uptime: {uptime_days}d {uptime_hours}h {uptime_minutes}m | "
-        f"{server_count} Servers | {user_count} Users | "
-        f"Bot-Version 3.5"
-    )
+        f"Uptime: {uptime_days}d {uptime_hours}h {uptime_minutes}m")
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=status_message))
 
 @bot.event
@@ -1246,6 +1329,7 @@ async def on_ready():
     optimize_db.start()
     reload_shops_task.start()
     sync_ratings.start()
+    update_server_infos.start()
     logging.info(f"Bot final loaded")
 
 @bot.event
