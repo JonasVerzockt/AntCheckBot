@@ -614,13 +614,18 @@ async def get_user_data(user_id):
     }
 
 async def get_owned_servers_data(user):
-    return [
-        {
-            "server_info": query_to_dict("SELECT * FROM server_info WHERE server_id=?", guild.id),
-            "server_settings": query_to_dict("SELECT * FROM server_settings WHERE server_id=?", guild.id)
-        }
-        for guild in bot.guilds if guild.owner_id == user.id
-    ]
+    owned_servers = []
+    for guild in bot.guilds:
+        try:
+            owner_id = (await bot.fetch_guild(guild.id)).owner_id
+            if owner_id == user.id:
+                owned_servers.append({
+                    "server_info": query_to_dict("SELECT * FROM server_info WHERE server_id=?", guild.id),
+                    "server_settings": query_to_dict("SELECT * FROM server_settings WHERE server_id=?", guild.id)
+                })
+        except discord.NotFound:
+            continue
+    return owned_servers
 
 def query_to_dict(query, *params):
     cursor.execute(query, params)
@@ -1134,7 +1139,8 @@ async def help(ctx):
             l10n.get('help_usersetting', lang),
             l10n.get('help_reloadshops', lang),
             l10n.get('help_shopmapping', lang),
-            l10n.get('help_showservers', lang)
+            l10n.get('help_showservers', lang),
+            l10n.get('help_export', lang)
         ])
         await ctx.respond(l10n.get('help_full', lang, commands=commands))
     except Exception as e:
@@ -1262,17 +1268,20 @@ async def export_data(ctx):
     lang = get_user_lang(user_id, ctx.guild.id if ctx.guild else None)
     
     try:
+        owned_servers = await get_owned_servers_data(ctx.author)
+        
         user_data = {
             "user_info": await get_user_data(user_id),
-            "servers": await get_owned_servers_data(ctx.author)
+            "servers": owned_servers
         }
 
         user_file = await create_temp_file(user_data["user_info"], f"user_{user_id}.json")
         files = [user_file]
 
-        if user_data["servers"]:
-            server_file = await create_temp_file(user_data["servers"], f"servers_{user_id}.json")
+        if owned_servers:
+            server_file = await create_temp_file(owned_servers, f"servers_{user_id}.json")
             files.append(server_file)
+            logging.info(f"Server export for {user_id} with {len(owned_servers)} servers")
 
         await ctx.author.send(
             l10n.get('data_export_success', lang),
