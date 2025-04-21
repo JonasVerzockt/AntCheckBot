@@ -468,6 +468,15 @@ async def update_server_info(guild):
             description=excluded.description
     """, data)
     conn.commit()
+    
+async def remove_left_servers(bot):
+    current_guild_ids = {guild.id for guild in bot.guilds}
+    cursor.execute("SELECT server_id FROM server_info")
+    db_guild_ids = {row[0] for row in cursor.fetchall()}
+    left_guild_ids = db_guild_ids - current_guild_ids
+    for guild_id in left_guild_ids:
+        cursor.execute("DELETE FROM server_info WHERE server_id = ?", (guild_id,))
+    conn.commit()
 
 async def trigger_availability_check(user_id, species, regions):
     try:
@@ -597,7 +606,7 @@ async def notify_expired(user_id, species, regions, lang):
         logging.error(f"Error in notify_expired: {e}")
 
 # Befehle
-@bot.slash_command(name="startup",description="Set the server language and where the bot should respond (Only Admin/Mod)")
+@bot.slash_command(name="startup",description="Set the server language and where the bot should respond (only Admin/Mod)")
 @admin_or_manage_messages()
 async def setup_server(ctx, language: discord.Option(str, "Select the bot language (de = German, en = English, eo = Esperanto)", choices=["de", "en", "eo"], default="en"), channel: discord.Option(discord.TextChannel, "Channel for bot responses (optional)", required=False) = None):
     server_id = ctx.guild.id
@@ -896,7 +905,7 @@ async def delete_notifications(ctx, ids: discord.Option(str, "Enter the IDs of t
         logging.error(f"Deleteerror: {e}")
         await ctx.respond(l10n.get('delete_error', lang), ephemeral=True)
 
-@bot.slash_command(name="stats", description="Show relevant statistics (Only Admin/Mod)")
+@bot.slash_command(name="stats", description="Show relevant statistics (only Admin/Mod)")
 @allowed_channel()
 @admin_or_manage_messages()
 async def stats(ctx):
@@ -1025,7 +1034,7 @@ async def history(ctx):
         logging.error(f"Error in history: {e}")
         await ctx.respond(l10n.get('general_error', lang))
 
-@bot.slash_command(name="system", description="Show system info (Only Admin/Mod)")
+@bot.slash_command(name="system", description="Show system info (only Admin/Mod)")
 @allowed_channel()
 @admin_or_manage_messages()
 async def system(ctx):
@@ -1109,7 +1118,7 @@ async def testnotification(ctx):
     except discord.Forbidden:
         await ctx.respond(l10n.get('testnotification_forbidden', lang), ephemeral=True)
 
-@bot.slash_command(name="reloadshops", description="Reload shop data from JSON file (Only Admin/Mod)")
+@bot.slash_command(name="reloadshops", description="Reload shop data from JSON file (only Admin/Mod)")
 @admin_or_manage_messages()
 @allowed_channel()
 async def reloadshops(ctx):
@@ -1291,6 +1300,7 @@ async def clean_old_notifications():
 async def update_server_infos():
     for guild in bot.guilds:
         await update_server_info(guild)
+    await remove_left_servers(bot)
 
 @tasks.loop(hours=1)
 async def reload_shops_task():
