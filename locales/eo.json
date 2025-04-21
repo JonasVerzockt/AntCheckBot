@@ -65,8 +65,8 @@
     "shopmapping_show_entry": "- `{external}` → `{id}` ({shop})",
     "shopmapping_remove_success": "✅ Mapado por `{external}` forigita.",
     "shopmapping_remove_none": "ℹ️ Neniu mapado trovita.",
-    "help_reloadshops": "/reloadshops — Reŝargi butiko-datumojn el JSON-dosiero (Admin/Mod)",
-    "help_shopmapping": "/shopmapping — Administri butikonoma mapojn por Google Sheets-importoj! (nur AAM-Discord)",
+    "help_reloadshops": "`/reloadshops` — Reŝargi butiko-datumojn el JSON-dosiero (Admin/Mod)",
+    "help_shopmapping": "`/shopmapping` — Administri butikonoma mapojn por Google Sheets-importoj! (nur AAM-Discord)",
     "serverlist_id": "🆔 ID",
     "serverlist_members": "👥 Uzantoj",
     "serverlist_icon": "🖼️ Piktogramo",
@@ -92,7 +92,7 @@
     "ch_notification_error": "⚠️ CH-livera listo ne trovita",
     "notification_set_swiss": "✅ Sciigo por {species} (CH-livero) aktivigita!",
     "no_shops_found": "❌ Neniuj butikoj trovitaj.",
-    "help_export": "/export_data – Elportu ĉiujn viajn konservitajn datumojn kiel JSON-dosiero.",
-    "help_ch_mapping": "/ch_delivery – Administru la liston de vendejoj, kiuj liveras al Svislando (nur AAM-Discord).",
+    "help_export": "`/export_data` – Elportu ĉiujn viajn konservitajn datumojn kiel JSON-dosiero.",
+    "help_ch_mapping": "`/ch_delivery` – Administru la liston de vendejoj, kiuj liveras al Svislando (nur AAM-Discord).",
     "general_error": "❌ Okazis eraro"
 }

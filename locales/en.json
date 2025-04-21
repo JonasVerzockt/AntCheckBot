@@ -65,8 +65,8 @@
     "shopmapping_show_entry": "- `{external}` → `{id}` ({shop})",
     "shopmapping_remove_success": "✅ Mapping for `{external}` deleted.",
     "shopmapping_remove_none": "ℹ️ No mapping found.",
-    "help_reloadshops": "/reloadshops — Reload shop data from JSON file (Admin/Mod)",
-    "help_shopmapping": "/shopmapping — Manage shop name mappings for Google Sheets imports! (only AAM-Discord)",
+    "help_reloadshops": "`/reloadshops` — Reload shop data from JSON file (Admin/Mod)",
+    "help_shopmapping": "`/shopmapping` — Manage shop name mappings for Google Sheets imports! (only AAM-Discord)",
     "serverlist_id": "🆔 ID",
     "serverlist_members": "👥 Members",
     "serverlist_icon": "🖼️ Icon",
@@ -92,7 +92,7 @@
     "ch_notification_error": "⚠️ CH delivery list not found",
     "notification_set_swiss": "✅ Notification for {species} (CH delivery) enabled!",
     "no_shops_found": "❌ No shops found.",
-    "help_export": "/export_data – Export all your saved data as a JSON file.",
-    "help_ch_mapping": "/ch_delivery – Manage the list of shops that deliver to Switzerland (only for AAM-Discord).",
+    "help_export": "`/export_data` – Export all your saved data as a JSON file.",
+    "help_ch_mapping": "`/ch_delivery` – Manage the list of shops that deliver to Switzerland (only for AAM-Discord).",
     "general_error": "❌ An error has occurred"
 }
