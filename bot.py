@@ -597,7 +597,7 @@ async def notify_expired(user_id, species, regions, lang):
         logging.error(f"Error in notify_expired: {e}")
 
 # Befehle
-@bot.slash_command(name="startup",description="Set the server language and where the bot should respond")
+@bot.slash_command(name="startup",description="Set the server language and where the bot should respond (Only Admin/Mod)")
 @admin_or_manage_messages()
 async def setup_server(ctx, language: discord.Option(str, "Select the bot language (de = German, en = English, eo = Esperanto)", choices=["de", "en", "eo"], default="en"), channel: discord.Option(discord.TextChannel, "Channel for bot responses (optional)", required=False) = None):
     server_id = ctx.guild.id
@@ -896,7 +896,7 @@ async def delete_notifications(ctx, ids: discord.Option(str, "Enter the IDs of t
         logging.error(f"Deleteerror: {e}")
         await ctx.respond(l10n.get('delete_error', lang), ephemeral=True)
 
-@bot.slash_command(name="stats", description="Show relevant statistics")
+@bot.slash_command(name="stats", description="Show relevant statistics (Only Admin/Mod)")
 @allowed_channel()
 @admin_or_manage_messages()
 async def stats(ctx):
@@ -1025,7 +1025,7 @@ async def history(ctx):
         logging.error(f"Error in history: {e}")
         await ctx.respond(l10n.get('general_error', lang))
 
-@bot.slash_command(name="system", description="Show system info")
+@bot.slash_command(name="system", description="Show system info (Only Admin/Mod)")
 @allowed_channel()
 @admin_or_manage_messages()
 async def system(ctx):
@@ -1109,7 +1109,7 @@ async def testnotification(ctx):
     except discord.Forbidden:
         await ctx.respond(l10n.get('testnotification_forbidden', lang), ephemeral=True)
 
-@bot.slash_command(name="reloadshops", description="Reload shop data from JSON file")
+@bot.slash_command(name="reloadshops", description="Reload shop data from JSON file (Only Admin/Mod)")
 @admin_or_manage_messages()
 @allowed_channel()
 async def reloadshops(ctx):
