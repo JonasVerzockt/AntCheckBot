@@ -549,6 +549,18 @@ async def reload_shops():
                 """, (shop["id"], shop["name"], shop["country"], shop["url"]), commit=True)
     except Exception as e:
         logging.error(f"Error reloading shop data: {e}")
+async def get_file_age(filename):
+    def sync_task():
+        try:
+            modified = os.path.getmtime(filename)
+            age = datetime.now() - datetime.fromtimestamp(modified)
+            days = age.days
+            hours, remainder = divmod(age.seconds, 3600)
+            minutes = remainder // 60
+            return f"{days}d {hours}h {minutes}m", datetime.fromtimestamp(modified).strftime('%Y-%m-%d %H:%M:%S')
+        except FileNotFoundError:
+            return None, "File not found"
+    return await bot.loop.run_in_executor(None, sync_task)
 # Befehle
 @bot.slash_command(name="startup",description="Set the server language and where the bot should respond (only Admin/Mod)")
 @admin_or_manage_messages()
