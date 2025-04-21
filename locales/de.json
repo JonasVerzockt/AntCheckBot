@@ -26,7 +26,7 @@
     "history_more_entries": "...und {count} weitere",
     "history_entry": "{species} in {regions} (Erstellt: {created}) - [ID: {id}]",
     "history_entry_completed": "{species} in {regions} (Erstellt: {created} | Benachrichtigt: {notified}) - [ID: {id}]",
-    "system_status": "**🤖 Bot-Status**\nUptime: {uptime}\n📡 Server: `{servers}` | 👥 Nutzer: `{users}` \n\n**🔍 Datenbankstatus:** {integrity} \nGesamte Benachrichtigungen: {total} \n\n**📂 Shop-Daten:**\n {file_status}",
+    "system_status": "**🤖 Bot-Status**\n⏲️ Uptime: {uptime}\n📡 Server: `{servers}` | 👥 Nutzer: `{users}` \n\n**🔍 Datenbankstatus:** {integrity} \nGesamte Benachrichtigungen: {total} \n\n**📂 Shop-Daten:**\n {file_status}",
     "system_performance": "**🚀 Performance**\n• ⏳ Latenz: `{latency} ms`\n• 🖥️ CPU-Auslastung: `{cpu}%`\n• 💾 RAM-Auslastung: `{ram}%`\n• ℹ️ System: `{system}`",
     "system_file_status": "🔄 Datei zuletzt aktualisiert: {modified} (vor {age})",
     "system_file_missing": "❌ Datei nicht gefunden",
