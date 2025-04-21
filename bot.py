@@ -393,8 +393,8 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False):
             regions_list = regions.split(",") if isinstance(regions, str) else regions
         try:
             available = await check_availability_for_species(
-                species, 
-                regions_list, 
+                species,
+                regions_list,
                 user_id=str(user_id),
                 ch_mode=ch_mode,
                 ch_shops=ch_shops
@@ -533,7 +533,7 @@ async def create_temp_file(data, filename):
             f.write(json_data)
     await bot.loop.run_in_executor(None, sync_task)
     return discord.File(
-        filename, 
+        filename,
         filename=filename,
         description="Personal data export"
     )
@@ -978,7 +978,8 @@ async def help(ctx):
             l10n.get('help_reloadshops', lang),
             l10n.get('help_shopmapping', lang),
             l10n.get('help_showservers', lang),
-            l10n.get('help_export', lang)
+            l10n.get('help_export', lang),
+            l10n.get('help_ch_mapping', lang)
         ])
         await ctx.respond(l10n.get('help_full', lang, commands=commands))
     except Exception as e:
@@ -1141,7 +1142,7 @@ async def add(ctx, shop_id: discord.Option(str, "Shop-ID")):
     current_data.append(new_entry)
     await save_ch_delivery_data(current_data)
     await ctx.respond(
-        l10n.get('ch_delivery_add_success', lang, 
+        l10n.get('ch_delivery_add_success', lang,
                 shop=SHOP_DATA[shop_id]['name']),
         ephemeral=True
     )

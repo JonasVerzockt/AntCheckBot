@@ -92,5 +92,7 @@
     "ch_notification_error": "⚠️ CH delivery list not found",
     "notification_set_swiss": "✅ Notification for {species} (CH delivery) enabled!",
     "no_shops_found": "❌ No shops found.",
+    "help_export": "/export_data – Export all your saved data as a JSON file.",
+    "help_ch_mapping": "/ch_delivery – Manage the list of shops that deliver to Switzerland (only for AAM-Discord).",
     "general_error": "❌ An error has occurred"
 }

@@ -89,10 +89,10 @@
     "ch_delivery_empty": "📭 La CH-livera listo nun estas malplena",
     "ch_delivery_header": "**🇨🇭 Butikoj kiuj liveras al Svislando**",
     "ch_delivery_entry": "• `{shop}` aldonita de **{user}** je {timestamp}",
-    "ch_notification_error": "⚠️ CH-Lieferliste nicht gefunden",
-    "notification_set_swiss": "✅ Benachrichtigung für {species} (CH-Lieferung) aktiviert!",
     "ch_notification_error": "⚠️ CH-livera listo ne trovita",
     "notification_set_swiss": "✅ Sciigo por {species} (CH-livero) aktivigita!",
     "no_shops_found": "❌ Neniuj butikoj trovitaj.",
+    "help_export": "/export_data – Elportu ĉiujn viajn konservitajn datumojn kiel JSON-dosiero.",
+    "help_ch_mapping": "/ch_delivery – Administru la liston de vendejoj, kiuj liveras al Svislando (nur AAM-Discord).",
     "general_error": "❌ Okazis eraro"
 }
