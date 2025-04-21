@@ -82,5 +82,17 @@
     "data_export_success": "Viaj eksportitaj datumoj estas aldonitaj 📎",
     "data_export_dm_sent": "La datumoj estas senditaj per DM ✅",
     "data_export_error": "Eraro dum eksporto ❌ Bonvolu reprovi poste",
+    "ch_delivery_exists": "⚠️ Butiko {shop} jam estas en la listo!",
+    "ch_delivery_add_success": "✅ {shop} aldoniĝis al la CH-livera listo",
+    "ch_delivery_remove_success": "❌ {shop} foriĝis el la CH-livera listo",
+    "ch_delivery_not_found": "🔍 Butiko ne trovita en la livera listo",
+    "ch_delivery_empty": "📭 La CH-livera listo nun estas malplena",
+    "ch_delivery_header": "**🇨🇭 Butikoj kiuj liveras al Svislando**",
+    "ch_delivery_entry": "• `{shop}` aldonita de **{user}** je {timestamp}",
+    "ch_notification_error": "⚠️ CH-Lieferliste nicht gefunden",
+    "notification_set_swiss": "✅ Benachrichtigung für {species} (CH-Lieferung) aktiviert!",
+    "ch_notification_error": "⚠️ CH-livera listo ne trovita",
+    "notification_set_swiss": "✅ Sciigo por {species} (CH-livero) aktivigita!",
+    "no_shops_found": "❌ Neniuj butikoj trovitaj.",
     "general_error": "❌ Okazis eraro"
 }

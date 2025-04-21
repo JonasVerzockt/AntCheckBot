@@ -82,5 +82,15 @@
     "data_export_success": "Your exported data is attached 📎",
     "data_export_dm_sent": "The data has been sent via DM ✅",
     "data_export_error": "Export error ❌ Please try again later",
+    "ch_delivery_exists": "⚠️ Shop {shop} is already on the list!",
+    "ch_delivery_add_success": "✅ {shop} has been added to the CH delivery list",
+    "ch_delivery_remove_success": "❌ {shop} has been removed from the CH delivery list",
+    "ch_delivery_not_found": "🔍 Shop not found in the delivery list",
+    "ch_delivery_empty": "📭 The CH delivery list is currently empty",
+    "ch_delivery_header": "**🇨🇭 Shops delivering to Switzerland**",
+    "ch_delivery_entry": "• `{shop}` added by **{user}** on {timestamp}",
+    "ch_notification_error": "⚠️ CH delivery list not found",
+    "notification_set_swiss": "✅ Notification for {species} (CH delivery) enabled!",
+    "no_shops_found": "❌ No shops found.",
     "general_error": "❌ An error has occurred"
 }

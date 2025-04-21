@@ -82,5 +82,15 @@
     "data_export_success": "Deine exportierten Daten im Anhang 📎",
     "data_export_dm_sent": "Die Daten wurden dir per PN gesendet ✅",
     "data_export_error": "Fehler beim Export ❌ Bitte versuche es später erneut",
+    "ch_delivery_exists": "⚠️ Shop {shop} steht bereits auf der Liste!",
+    "ch_delivery_add_success": "✅ {shop} wurde zur CH-Lieferliste hinzugefügt",
+    "ch_delivery_remove_success": "❌ {shop} wurde von der CH-Lieferliste entfernt",
+    "ch_delivery_not_found": "🔍 Shop nicht in der Lieferliste gefunden",
+    "ch_delivery_empty": "📭 Die CH-Lieferliste ist aktuell leer",
+    "ch_delivery_header": "**🇨🇭 Shops mit Schweiz-Lieferung**",
+    "ch_delivery_entry": "• `{shop}` hinzugefügt von **{user}** am {timestamp}",
+    "ch_notification_error": "⚠️ CH-Lieferliste nicht gefunden",
+    "notification_set_swiss": "✅ Benachrichtigung für {species} (CH-Lieferung) aktiviert!",
+    "no_shops_found": "❌ Keine Shops gefunden.",
     "general_error": "❌ Ein Fehler ist aufgetreten"
 }

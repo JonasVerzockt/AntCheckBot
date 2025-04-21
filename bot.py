@@ -250,23 +250,42 @@ def get_file_age(filename):
     except FileNotFoundError:
         return None, "File not found"
 
-def check_availability_for_species(species, regions, user_id=None):
+def check_availability_for_species(species, regions, user_id=None, ch_mode=False, ch_shops=None):
     logger = logging.getLogger("availability")
-    logger.info(f"Start availability check for Art: '{species}', Regions: {regions}, User: {user_id}")
+    logger.info(f"Start availability check for species: '{species}', regions: {regions}, User: {user_id}, CH-Mode: {ch_mode}")
+
+    if ch_mode:
+        if not ch_shops:
+            try:
+                with open("shops_ch_delivery.json", "r", encoding="utf-8") as f:
+                    ch_json_shops = {entry["shop_id"] for entry in json.load(f)}
+                    logger.info(f"CH delivery list loaded with {len(ch_json_shops)} manual entries")
+
+                auto_ch_shops = {
+                    shop_id for shop_id, shop_data in SHOP_DATA.items()
+                    if shop_data.get("country", "").lower() == "ch"
+                }
+                logger.info(f"Found {len(auto_ch_shops)} auto-detected CH stores")
+
+                ch_shops = ch_json_shops.union(auto_ch_shops)
+                logger.info(f"Total CH stores: {len(ch_shops)} (manual: {len(ch_json_shops)}, auto: {len(auto_ch_shops)})")
+
+            except Exception as e:
+                logger.error(f"CH mode initialization failed: {e}")
+                return []
+        else:
+            logger.info(f"Using pre-loaded CH shops: {len(ch_shops)}")
 
     blacklisted_shops = set()
     if user_id is not None:
         blacklisted_shops = get_blacklisted_shops(user_id)
-        logger.debug(f"Blacklist for users {user_id}: {blacklisted_shops}")
 
     try:
         with open("shops_data.json", "r", encoding="utf-8") as f:
             shops_list = json.load(f)
         SHOP_DATA = {shop["id"]: shop for shop in shops_list}
-        logger.info(f"{len(SHOP_DATA)} Shops geladen.")
-        logger.debug(f"Loaded store IDs: {list(SHOP_DATA.keys())}")
     except Exception as e:
-        logger.error(f"Error loading the store data: {e}", exc_info=True)
+        logger.error(f"Error loading shop data: {e}")
         return []
 
     available_products = []
@@ -275,32 +294,30 @@ def check_availability_for_species(species, regions, user_id=None):
     for filename in os.listdir(DATA_DIRECTORY):
         if filename.startswith("products_shop_") and filename.endswith(".json"):
             file_path = os.path.join(DATA_DIRECTORY, filename)
-
+            
             try:
                 shop_id_from_filename = int(filename.split("_")[2].split(".")[0])
-                logger.debug(f"File name: {filename}, extracted store ID: {shop_id_from_filename}")
-            except Exception as e:
-                logger.warning(f"File name '{filename}' could not be parsed: {e}")
+            except Exception:
                 continue
 
-            shop_data = SHOP_DATA.get(shop_id_from_filename)
+            if ch_mode and str(shop_id_from_filename) not in ch_shops:
+                logger.debug(f"Shop {shop_id_from_filename} not in CH list - skipped")
+                continue
+
+            shop_data = SHOP_DATA.get(str(shop_id_from_filename))
             if not shop_data:
-                logger.warning(f"No store data record for store ID '{shop_id_from_filename}' found.")
                 continue
 
-            shop_country = shop_data.get("country", "").lower()
-            if shop_country not in [r.lower() for r in regions]:
-                logger.debug(f"Shop '{shop_data['name']}' ({shop_country}) not in target regions {regions}.")
-                continue
+            if not ch_mode:
+                shop_country = shop_data.get("country", "").lower()
+                if shop_country not in [r.lower() for r in regions]:
+                    logger.debug(f"Shop region {shop_country} not in {regions}")
+                    continue
 
             try:
                 with open(file_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
-            except FileNotFoundError:
-                logger.warning(f"Product file '{file_path}' does not exist.")
-                continue
-            except Exception as e:
-                logger.error(f"Error loading the product file '{file_path}': {e}", exc_info=True)
+            except Exception:
                 continue
 
             for product in data:
@@ -309,21 +326,11 @@ def check_availability_for_species(species, regions, user_id=None):
                 in_stock = product.get("in_stock", False)
                 product_shop_id = product.get("shop_id")
 
-                logger.debug(f"Check product: '{title}' | In Stock: {in_stock} | Shop-ID: {product_shop_id}")
-
-                if not title_cf.startswith(species_cf):
-                    logger.debug(f"Product '{title}' does not match search term '{species}' (startswith).")
+                if (not title_cf.startswith(species_cf) or
+                    not in_stock or
+                    product_shop_id in blacklisted_shops):
                     continue
 
-                if not in_stock:
-                    logger.debug(f"Product '{title}' not in stock.")
-                    continue
-
-                if product_shop_id in blacklisted_shops:
-                    logger.info(f"Shop '{product_shop_id}' for User {user_id} on blacklist, skipped.")
-                    continue
-
-                logger.info(f"Product available: '{title}' bei '{shop_data['name']}' ({shop_country}).")
                 available_products.append({
                     "species": title,
                     "shop_name": shop_data["name"],
@@ -335,7 +342,7 @@ def check_availability_for_species(species, regions, user_id=None):
                     "shop_id": shop_id_from_filename
                 })
 
-    logger.info(f"Availability check completed. {len(available_products)} Products found.")
+    logger.info(f"Availability check completed. Found: {len(available_products)}")
     return available_products
 
 def reload_shops():
@@ -463,6 +470,36 @@ def expand_regions(regions):
         regions = [r for r in regions if r != "eu"]
         regions = list(set(regions + EU_COUNTRY_CODES))
     return regions
+    
+def split_availability_messages(entries, max_length=2000):
+    chunks = []
+    current_chunk = []
+    current_length = 0
+    
+    for entry in entries:
+        entry_length = len(entry) + 2  # +2 für die Newlines
+        if current_length + entry_length > max_length:
+            chunks.append("\n\n".join(current_chunk))
+            current_chunk = []
+            current_length = 0
+        current_chunk.append(entry)
+        current_length += entry_length
+    
+    if current_chunk:
+        chunks.append("\n\n".join(current_chunk))
+    
+    return chunks
+
+def load_ch_delivery_data():
+    try:
+        with open("shops_ch_delivery.json", "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+def save_ch_delivery_data(data):
+    with open("shops_ch_delivery.json", "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
 
 async def update_server_info(guild):
     data = get_guild_info(guild)
@@ -494,14 +531,39 @@ async def remove_left_servers(bot):
         cursor.execute("DELETE FROM server_info WHERE server_id = ?", (guild_id,))
     conn.commit()
 
-async def trigger_availability_check(user_id, species, regions):
+async def trigger_availability_check(user_id, species, regions, ch_mode=False):
     try:
         server_id = None
         lang = get_user_lang(user_id, server_id)
-        regions_list = regions.split(",") if isinstance(regions, str) else regions
+        
+        ch_shops = []
+        if ch_mode:
+            try:
+                with open("shops_ch_delivery.json", "r", encoding="utf-8") as f:
+                    ch_data = json.load(f)
+                    ch_shops = [str(entry["shop_id"]) for entry in ch_data]
+                    logging.info(f"CH delivery list with {len(ch_shops)} stores loaded")
+                regions_list = ["ch"]
+            except FileNotFoundError:
+                logging.error("CH delivery file not found")
+                return
+            except json.JSONDecodeError:
+                logging.error("Invalid JSON format in CH delivery file")
+                return
+            except Exception as e:
+                logging.error(f"Error loading CH data: {e}")
+                return
+        else:
+            regions_list = regions.split(",") if isinstance(regions, str) else regions
 
         try:
-            available = check_availability_for_species(species, regions_list, user_id=str(user_id))
+            available = check_availability_for_species(
+                species, 
+                regions_list, 
+                user_id=str(user_id),
+                ch_mode=ch_mode,
+                ch_shops=ch_shops
+            )
         except FileNotFoundError as e:
             logging.error(f"Missing product file: {e.filename}")
             return
@@ -528,14 +590,14 @@ async def trigger_availability_check(user_id, species, regions):
             return
 
         header = l10n.get('availability_header', lang, species=species)
-        message = [header + "\n"]
-
+        message_entries = [header]
+        
         for product in available:
             shop_id = product['shop_id']
             rating = get_shop_rating(product['shop_id'])
             rating_str = f"⭐ {rating:.2f}" if rating else "❌"
 
-            message.append(l10n.get(
+            message_entries.append(l10n.get(
                 'availability_entry',
                 lang,
                 species=product['species'],
@@ -548,15 +610,19 @@ async def trigger_availability_check(user_id, species, regions):
                 rating=rating_str
             ))
 
+        message_chunks = split_availability_messages(message_entries)
+        
         try:
-            await user.send("\n\n".join(message))
+            for chunk in message_chunks:
+                await user.send(chunk)
+                
             cursor.execute("""
                 UPDATE notifications
                 SET status='completed', notified_at=CURRENT_TIMESTAMP
                 WHERE user_id=? AND species=?
             """, (user_id, species))
             conn.commit()
-
+            
         except discord.Forbidden:
             logging.warning(f"DM failed for user {user_id}")
             await handle_dm_failure(user_id, species, regions, lang)
@@ -577,6 +643,7 @@ async def trigger_availability_check(user_id, species, regions):
             WHERE user_id=? AND species=?
         """, (user_id, species))
         conn.commit()
+
 
 async def handle_dm_failure(user_id, species, regions, lang):
     try:
@@ -848,19 +915,30 @@ async def shop_list(
 
 @bot.slash_command(name="notification", description="Set up your notifications")
 @allowed_channel()
-async def notification(ctx, species: discord.Option(str, "Which species do you want to be notified about?"), regions: discord.Option(str, "For which regions do you want notifications?"), force: discord.Option(bool, "Force notification even if already set", default=False)):
+async def notification(ctx, species: discord.Option(str, "Which species do you want to be notified about?"), regions: discord.Option(str, "For which regions do you want notifications?", required=False, default=None), swiss_only: discord.Option(bool, "Only CH-delivering stores", default=False), force: discord.Option(bool, "Force notification even if already set", default=False)):
     server_id = ctx.guild.id if ctx.guild else None
     lang = get_user_lang(ctx.author.id, server_id)
 
-    regions_list = [r.strip().lower() for r in regions.split(",")]
-    regions_list = expand_regions(regions_list)
-    valid_regions = [r for r in regions_list if any(s["country"].lower() == r for s in SHOP_DATA.values())]
+    if swiss_only:
+        try:
+            with open("shops_ch_delivery.json", "r") as f:
+                ch_shops = [entry["shop_id"] for entry in json.load(f)]
+        except FileNotFoundError:
+            await ctx.respond(l10n.get('ch_notification_error', lang), ephemeral=True)
+            return
+    
+        regions_str = "ch_swiss"
+        regions_list = ["ch"]
+    else:
+        regions_list = [r.strip().lower() for r in regions.split(",")] if regions else []
+        regions_list = expand_regions(regions_list)
+        valid_regions = [r for r in regions_list if any(s["country"].lower() == r for s in SHOP_DATA.values())]
 
-    if not valid_regions:
-        available_regions = sorted({s["country"].lower() for s in SHOP_DATA.values()})
-        available_regions_str = ", ".join(available_regions)
-        await ctx.respond(l10n.get('invalid_regions', lang, regions=available_regions_str), ephemeral=True)
-        return
+        if not valid_regions:
+            available_regions = sorted({s["country"].lower() for s in SHOP_DATA.values()})
+            available_regions_str = ", ".join(available_regions)
+            await ctx.respond(l10n.get('invalid_regions', lang, regions=available_regions_str), ephemeral=True)
+            return
 
     species_found = species_exists(species)
 
@@ -1190,6 +1268,7 @@ shopmapping = bot.create_group(
 
 @shopmapping.command(name="add", description="Assign external shop name to internal ID (only for AAM-Discord)")
 @admin_or_manage_messages()
+@allowed_channel()
 async def shopmapping_add(
     ctx,
     external_name: discord.Option(str, "Name from Google Sheets"),
@@ -1219,6 +1298,7 @@ async def shopmapping_add(
 
 @shopmapping.command(name="show", description="Show all current mappings (only for AAM-Discord)")
 @admin_or_manage_messages()
+@allowed_channel()
 async def shopmapping_show(ctx):
     lang = get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
     cursor.execute("SELECT * FROM shop_name_mappings")
@@ -1237,6 +1317,7 @@ async def shopmapping_show(ctx):
 
 @shopmapping.command(name="remove", description="Remove a shop mapping (only for AAM-Discord)")
 @admin_or_manage_messages()
+@allowed_channel()
 async def shopmapping_remove(
     ctx,
     external_name: discord.Option(str, "Name from Google Sheets")
@@ -1252,6 +1333,7 @@ async def shopmapping_remove(
 
 @bot.slash_command(name="serverlist", description="Shows all server information (only for bot owners)")
 @owner_only()
+@allowed_channel()
 async def serverlist(ctx):
     if ctx.author.id != BOT_OWNER:
         lang = get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
@@ -1313,6 +1395,99 @@ async def export_data(ctx):
         for f in files:
             if os.path.exists(f.filename):
                 os.remove(f.filename)
+
+ch_delivery = bot.create_group(
+    name="ch_delivery",
+    description="Management of stores that deliver to Switzerland (only for AAM-Discord)",
+    guild_ids=SERVER_IDS
+)
+
+@ch_delivery.command(description="Add store to CH delivery list (only for AAM-Discord)")
+@allowed_channel()
+async def add(ctx, shop_id: discord.Option(str, "Shop-ID")):
+    user_id = str(ctx.author.id)
+    lang = get_user_lang(user_id, ctx.guild.id if ctx.guild else None)
+    
+    current_data = load_ch_delivery_data()
+    
+    if shop_id not in SHOP_DATA:
+        await ctx.respond(l10n.get('shop_not_found', lang), ephemeral=True)
+        return
+    
+    if any(entry["shop_id"] == shop_id for entry in current_data):
+        await ctx.respond(
+            l10n.get('ch_delivery_exists', lang, shop=SHOP_DATA[shop_id]['name']),
+            ephemeral=True
+        )
+        return
+    
+    new_entry = {
+        "shop_id": shop_id,
+        "added_by": user_id,
+        "added_at": datetime.now().isoformat()
+    }
+    
+    current_data.append(new_entry)
+    save_ch_delivery_data(current_data)
+    
+    await ctx.respond(
+        l10n.get('ch_delivery_add_success', lang, 
+                shop=SHOP_DATA[shop_id]['name']),
+        ephemeral=True
+    )
+
+@ch_delivery.command(description="Remove store from CH delivery list (only for AAM-Discord and Admin/Mod)")
+@admin_or_manage_messages()
+@allowed_channel()
+async def remove(ctx, shop_id: discord.Option(str, "Shop-ID")):
+    lang = get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
+    
+    current_data = load_ch_delivery_data()
+    initial_count = len(current_data)
+    
+    new_data = [entry for entry in current_data if entry["shop_id"] != shop_id]
+    
+    if len(new_data) == initial_count:
+        await ctx.respond(
+            l10n.get('ch_delivery_not_found', lang),
+            ephemeral=True
+        )
+        return
+    
+    save_ch_delivery_data(new_data)
+    
+    await ctx.respond(
+        l10n.get('ch_delivery_remove_success', lang,
+                shop=SHOP_DATA.get(shop_id, {}).get('name', shop_id)),
+        ephemeral=True
+    )
+
+@ch_delivery.command(description="Show list of all CH suppliers (only for AAM-Discord)")
+@allowed_channel()
+async def list(ctx):
+    lang = get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
+    current_data = load_ch_delivery_data()
+    
+    if not current_data:
+        await ctx.respond(l10n.get('ch_delivery_empty', lang), ephemeral=True)
+        return
+    
+    entries = []
+    for entry in current_data:
+        shop = SHOP_DATA.get(entry["shop_id"], {})
+        user = await bot.fetch_user(int(entry["added_by"]))
+        timestamp = datetime.fromisoformat(entry["added_at"]).strftime("%d.%m.%Y %H:%M")
+        
+        entries.append(
+            l10n.get('ch_delivery_entry', lang,
+                    shop=shop.get('name', 'Unbekannt'),
+                    user=user.display_name,
+                    timestamp=timestamp)
+        )
+    
+    message = l10n.get('ch_delivery_header', lang) + "\n\n" + "\n".join(entries)
+    
+    await ctx.respond(message[:2000], ephemeral=True)
 
 # Automatisierte Aufgaben
 @tasks.loop(hours=168)
