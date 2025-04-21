@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
 File: bot.py
 Author: Jonas Beier
@@ -12,7 +11,6 @@ Description:
     zur Speicherung von Benachrichtigungen und JSON-Dateien für Shop-Daten.
     Unterstützt Mehrsprachigkeit (de/en), Server- und Benutzereinstellungen sowie
     kanalgebundene Befehle.
-
 Dependencies:
     - discord.py
     - sqlite3
@@ -21,13 +19,11 @@ Dependencies:
     - logging
     - psutil
     - platform
-
 Setup:
     1. Installiere die benötigten Python-Bibliotheken:
        pip install discord.py
     2. Stelle sicher, dass die Datei `shops_data.json` und der Datenbankpfad korrekt konfiguriert sind.
     3. Setze den Discord-Bot-Token in der Variable `TOKEN`.
-
 License: CC BY-NC 4.0
 Contact: https://github.com/JonasVerzockt/
 """
@@ -45,7 +41,6 @@ from pathlib import Path
 from logging.handlers import RotatingFileHandler
 from thefuzz import process
 from concurrent.futures import ThreadPoolExecutor
-
 # Pfade und Konfiguration
 BASE_DIR = Path(__file__).parent
 LOCALES_DIR = BASE_DIR / "locales"
@@ -55,32 +50,26 @@ SHOPS_DATA_FILE = "shops_data.json"
 SERVER_IDS = [ID1, ID2]
 BOT_OWNER = USERID
 EU_COUNTRIES_FILE = "eu_countries.json"
-db_executor = ThreadPoolExecutor(max_workers=5)
-
+db_executor = ThreadPoolExecutor(max_workers=15)
 intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
 intents.members = True
 bot = discord.Bot(intents=intents)
-
 # Log konfiguieren
 def setup_logger():
     log_file = BASE_DIR / f"bot_log_{datetime.now().strftime('%Y%m%d')}.log"
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
-
     handler = RotatingFileHandler(log_file, maxBytes=1024*1024, backupCount=5, encoding='utf8')
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
     handler.setFormatter(formatter)
     logger.addHandler(handler)
-
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
-
 setup_logger()
-
 # EU Liste laden
 async def load_eu_countries():
     def sync_load():
@@ -88,7 +77,6 @@ async def load_eu_countries():
             data = json.load(f)
             return [entry["code"].lower() for entry in data]
     return await bot.loop.run_in_executor(None, sync_load)
-
 # Datenbankverbindung
 async def execute_db(query, params=(), commit=False, fetch=False):
     def sync_task():
@@ -105,29 +93,23 @@ async def execute_db(query, params=(), commit=False, fetch=False):
         finally:
             conn.close()
     return await bot.loop.run_in_executor(db_executor, sync_task)
-
-
 # Spracheinstellungen
 class Localization:
     def __init__(self):
         self.languages = {}
         self.load_languages()
-
     def load_languages(self):
         for file in LOCALES_DIR.glob("*.json"):
             lang = file.stem
             with open(file, 'r', encoding='utf-8') as f:
                 self.languages[lang] = json.load(f)
-
     def get(self, key, lang='en', **kwargs):
         try:
             return self.languages[lang][key].format(**kwargs)
         except KeyError as e:
             logging.error(f"Missing placeholder {e} for key '{key}'")
             return f"[ERROR: Missing data for {key}]"
-
 l10n = Localization()
-
 async def get_user_lang(user_id, server_id):
     rows = await execute_db("SELECT language FROM user_settings WHERE user_id=?", (user_id,), fetch=True)
     if rows:
@@ -136,12 +118,10 @@ async def get_user_lang(user_id, server_id):
     if rows:
         return rows[0][0]
     return 'en'
-
 # Hilfefunktionen und Decorators
 async def get_server_channel(server_id):
     rows = await execute_db("SELECT channel_id FROM server_settings WHERE server_id=?", (server_id,), fetch=True)
     return rows[0][0] if rows else None
-
 def allowed_channel():
     async def predicate(ctx):
         if ctx.guild is None:
@@ -151,13 +131,11 @@ def allowed_channel():
             return True
         return False
     return commands.check(predicate)
-
 def admin_or_manage_messages():
     async def predicate(ctx):
         perms = ctx.author.guild_permissions
         return perms.administrator or perms.manage_messages
     return commands.check(predicate)
-
 async def species_exists(species):
     def sync_task():
         for filename in os.listdir(DATA_DIRECTORY):
@@ -176,91 +154,58 @@ async def species_exists(species):
                             return True
         return False
     return await bot.loop.run_in_executor(None, sync_task)
-
-async def get_file_age(filename):
-    def sync_task():
-        try:
-            modified = os.path.getmtime(filename)
-            age = datetime.now() - datetime.fromtimestamp(modified)
-            days = age.days
-            hours, remainder = divmod(age.seconds, 3600)
-            minutes = remainder // 60
-            return f"{days}d {hours}h {minutes}m", datetime.fromtimestamp(modified).strftime('%Y-%m-%d %H:%M:%S')
-        except FileNotFoundError:
-            return None, "File not found"
-    return await bot.loop.run_in_executor(None, sync_task)
-
 async def check_availability_for_species(species, regions, user_id=None, ch_mode=False, ch_shops=None):
     logger = logging.getLogger("availability")
     logger.info(f"Start availability check for species: '{species}', regions: {regions}, User: {user_id}, CH-Mode: {ch_mode}")
-    def sync_task():
-
+    if user_id is not None:
+        blacklisted_shops = await get_blacklisted_shops(user_id)
+    else:
+        blacklisted_shops = set()
+    SHOP_DATA = await load_shop_data()
+    def sync_task(blacklisted_shops, SHOP_DATA, ch_shops):
         if ch_mode:
             if not ch_shops:
                 try:
                     with open("shops_ch_delivery.json", "r", encoding="utf-8") as f:
                         ch_json_shops = {entry["shop_id"] for entry in json.load(f)}
                         logger.info(f"CH delivery list loaded with {len(ch_json_shops)} manual entries")
-
                     auto_ch_shops = {
                         shop_id for shop_id, shop_data in SHOP_DATA.items()
                         if shop_data.get("country", "").lower() == "ch"
-                }
+                    }
                     logger.info(f"Found {len(auto_ch_shops)} auto-detected CH stores")
-
                     ch_shops = ch_json_shops.union(auto_ch_shops)
                     logger.info(f"Total CH stores: {len(ch_shops)} (manual: {len(ch_json_shops)}, auto: {len(auto_ch_shops)})")
-
                 except Exception as e:
                     logger.error(f"CH mode initialization failed: {e}")
                     return []
             else:
                 logger.info(f"Using pre-loaded CH shops: {len(ch_shops)}")
-
-        blacklisted_shops = set()
-        if user_id is not None:
-            blacklisted_shops = get_blacklisted_shops(user_id)
-
-        try:
-            with open("shops_data.json", "r", encoding="utf-8") as f:
-                shops_list = json.load(f)
-            SHOP_DATA = {shop["id"]: shop for shop in shops_list}
-        except Exception as e:
-            logger.error(f"Error loading shop data: {e}")
-            return []
-
         available_products = []
         species_cf = species.strip().casefold()
-
-    for filename in os.listdir(DATA_DIRECTORY):
+        for filename in os.listdir(DATA_DIRECTORY):
             if filename.startswith("products_shop_") and filename.endswith(".json"):
                 file_path = os.path.join(DATA_DIRECTORY, filename)
-    
                 try:
                     shop_id_from_filename = int(filename.split("_")[2].split(".")[0])
                 except Exception:
                     continue
-
-                if ch_mode and str(shop_id_from_filename) not in ch_shops:
+                if ch_mode and str(shop_id_from_filename) not in (ch_shops or set()):
                     logger.debug(f"Shop {shop_id_from_filename} not in CH list - skipped")
                     continue
-
                 shop_data = SHOP_DATA.get(str(shop_id_from_filename))
                 if not shop_data:
                     continue
-
                 if not ch_mode:
                     shop_country = shop_data.get("country", "").lower()
                     if shop_country not in [r.lower() for r in regions]:
                         logger.debug(f"Shop region {shop_country} not in {regions}")
                         continue
-
                 try:
                     with open(file_path, "r", encoding="utf-8") as f:
                         data = json.load(f)
                 except Exception:
                     continue
-
                 for product in data:
                     title = product.get("title", "").strip()
                     title_cf = title.casefold()
@@ -271,7 +216,6 @@ async def check_availability_for_species(species, regions, user_id=None, ch_mode
                         not in_stock or
                         product_shop_id in blacklisted_shops):
                         continue
-
                     available_products.append({
                         "species": title,
                         "shop_name": shop_data["name"],
@@ -281,25 +225,12 @@ async def check_availability_for_species(species, regions, user_id=None, ch_mode
                         "antcheck_url": product["antcheck_url"],
                         "shop_url": shop_data["url"],
                         "shop_id": shop_id_from_filename
-                })
-
+                    })
         logger.info(f"Availability check completed. Found: {len(available_products)}")
         return available_products
-    return await bot.loop.run_in_executor(None, sync_task)
-
-async def reload_shops():
-    try:
-        with open(SHOPS_DATA_FILE, "r") as f:
-            shops = json.load(f)
-            SHOP_DATA = {shop["id"]: shop for shop in shops}
-            for shop in SHOP_DATA.values():
-                await execute_db("""
-                    INSERT OR REPLACE INTO shops (id, name, country, url)
-                    VALUES (?, ?, ?, ?)
-                """, (shop["id"], shop["name"], shop["country"], shop["url"]), commit=True)
-    except Exception as e:
-        logging.error(f"Error reloading shop data: {e}")
-
+    return await bot.loop.run_in_executor(
+        None, lambda: sync_task(blacklisted_shops, SHOP_DATA, ch_shops)
+    )
 async def load_shop_data_from_google_sheets():
     def sync_task():
         import os
@@ -308,11 +239,9 @@ async def load_shop_data_from_google_sheets():
         from google_auth_oauthlib.flow import InstalledAppFlow
         from googleapiclient.discovery import build
         from googleapiclient.errors import HttpError
-
         SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
         SPREADSHEET_ID = '1Ymc8M5GHwfKbdh0QMRhZhL5zUK2wMRua0vk6v1MxiYE'
         RANGE_NAME = 'Händler A-Z!A2:C'
-
         creds = None
         if os.path.exists('token.json'):
             creds = Credentials.from_authorized_user_file('token.json', SCOPES)
@@ -324,7 +253,6 @@ async def load_shop_data_from_google_sheets():
                 creds = flow.run_local_server(port=0)
             with open('token.json', 'w') as token:
                 token.write(creds.to_json())
-
         try:
             service = build('sheets', 'v4', credentials=creds, cache_discovery=False)
             sheet = service.spreadsheets()
@@ -337,7 +265,6 @@ async def load_shop_data_from_google_sheets():
             print(f'An error occurred: {err}')
             return []
     return await bot.loop.run_in_executor(None, sync_task)
-
 async def split_message(text, max_length=2000):
     lines = text.split('\n')
     blocks = []
@@ -350,7 +277,6 @@ async def split_message(text, max_length=2000):
     if current:
         blocks.append(current)
     return blocks
-
 async def get_blacklisted_shops(user_id):
     rows = await execute_db(
         "SELECT shop_id FROM user_shop_blacklist WHERE user_id=?",
@@ -358,7 +284,6 @@ async def get_blacklisted_shops(user_id):
         fetch=True
     )
     return {row[0] for row in rows}
-
 async def get_shop_rating(shop_id):
     rows = await execute_db(
         "SELECT average_rating FROM shops WHERE id = ?",
@@ -366,12 +291,10 @@ async def get_shop_rating(shop_id):
         fetch=True
     )
     return rows[0][0] if rows else None
-
 def owner_only():
     async def predicate(ctx):
         return ctx.author.id == BOT_OWNER
     return commands.check(predicate)
-
 def get_guild_info(guild):
     return (
         guild.id,
@@ -383,19 +306,16 @@ def get_guild_info(guild):
         str(guild.banner.url) if guild.banner else None,
         guild.description or None
     )
-
 async def expand_regions(regions):
     regions = [r.strip().lower() for r in regions]
     if "eu" in regions:
         regions = [r for r in regions if r != "eu"]
         regions = list(set(regions + EU_COUNTRY_CODES))
     return regions
-    
 def split_availability_messages(entries, max_length=2000):
     chunks = []
     current_chunk = []
     current_length = 0
-    
     for entry in entries:
         entry_length = len(entry) + 2  # +2 für die Newlines
         if current_length + entry_length > max_length:
@@ -404,12 +324,9 @@ def split_availability_messages(entries, max_length=2000):
             current_length = 0
         current_chunk.append(entry)
         current_length += entry_length
-    
     if current_chunk:
         chunks.append("\n\n".join(current_chunk))
-    
     return chunks
-
 async def load_ch_delivery_data():
     def sync_task():
         try:
@@ -418,20 +335,16 @@ async def load_ch_delivery_data():
         except (FileNotFoundError, json.JSONDecodeError):
             return []
     return await bot.loop.run_in_executor(None, sync_task)
-
 async def save_ch_delivery_data(data):
     def sync_task():
         with open("shops_ch_delivery.json", "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
     await bot.loop.run_in_executor(None, sync_task)
-
 async def load_shop_data():
     rows = await execute_db("SELECT id, name, country, url, average_rating FROM shops", fetch=True)
     return {row['id']: dict(row) for row in rows}
-
 async def update_server_info(guild):
     data = get_guild_info(guild)
-
     await execute_db("""
         INSERT INTO server_info (
             server_id, server_name, member_count,
@@ -448,7 +361,6 @@ async def update_server_info(guild):
             banner_url=excluded.banner_url,
             description=excluded.description
     """, data, commit=True)
-    
 async def remove_left_servers(bot):
     current_guild_ids = {guild.id for guild in bot.guilds}
     rows = await execute_db("SELECT server_id FROM server_info", fetch=True)
@@ -456,12 +368,10 @@ async def remove_left_servers(bot):
     left_guild_ids = db_guild_ids - current_guild_ids
     for guild_id in left_guild_ids:
         await execute_db("DELETE FROM server_info WHERE server_id = ?", (guild_id,), commit=True)
-
 async def trigger_availability_check(user_id, species, regions, ch_mode=False):
     try:
         server_id = None
         lang = await get_user_lang(user_id, server_id)
-        
         ch_shops = []
         if ch_mode:
             try:
@@ -481,7 +391,6 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False):
                 return
         else:
             regions_list = regions.split(",") if isinstance(regions, str) else regions
-
         try:
             available = await check_availability_for_species(
                 species, 
@@ -496,11 +405,9 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False):
         except Exception as e:
             logging.error(f"Error during availability check: {e}", exc_info=True)
             return
-
         if not available:
             logging.info(f"No available products for {species} in {regions}")
             return
-
         user = None
         try:
             user = await bot.fetch_user(int(user_id))
@@ -510,19 +417,15 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False):
         except discord.HTTPException as e:
             logging.error(f"HTTP-Error: {e}")
             return
-
         if not user:
             logging.error(f"User {user_id} is None")
             return
-
         header = l10n.get('availability_header', lang, species=species)
         message_entries = [header]
-        
         for product in available:
             shop_id = product['shop_id']
             rating = await get_shop_rating(product['shop_id'])
             rating_str = f"⭐ {rating:.2f}" if rating else "❌"
-
             message_entries.append(l10n.get(
                 'availability_entry',
                 lang,
@@ -535,20 +438,16 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False):
                 shop_url=product['shop_url'],
                 rating=rating_str
             ))
-
         message_chunks = split_availability_messages(message_entries)
-        
         try:
             for chunk in message_chunks:
                 await user.send(chunk)
-                
             await execute_db("""
                 UPDATE notifications
                 SET status='completed', notified_at=CURRENT_TIMESTAMP
                 WHERE user_id=? AND species=?
             """, (user_id, species))
             conn.commit()
-            
         except discord.Forbidden:
             logging.warning(f"DM failed for user {user_id}")
             await handle_dm_failure(user_id, species, regions, lang)
@@ -560,7 +459,6 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False):
                 raise
         except Exception as e:
             logging.error(f"Error when sending the message: {e}")
-
     except Exception as e:
         logging.error(f"Critical error: {e}", exc_info=True)
         await execute_db("""
@@ -569,23 +467,18 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False):
             WHERE user_id=? AND species=?
         """, (user_id, species))
         conn.commit()
-
-
 async def handle_dm_failure(user_id, species, regions, lang):
     try:
         servers = await execute_db("""
             SELECT DISTINCT server_id FROM server_user_mappings
             WHERE user_id=?
         """, (user_id,), fetch=True)
-
         for (server_id,) in servers:
             channel_id = await get_server_channel(server_id)
             channel = bot.get_channel(channel_id) if channel_id else None
-
             if not channel:
                 guild = bot.get_guild(server_id)
                 channel = guild.system_channel if guild else None
-
             if channel:
                 try:
                     await channel.send(
@@ -599,10 +492,8 @@ async def handle_dm_failure(user_id, species, regions, lang):
                         await asyncio.sleep(e.retry_after)
                     else:
                         raise
-
     except Exception as e:
         logging.error(f"Error with DM fallback: {e}")
-
 async def notify_expired(user_id, species, regions, lang):
     try:
         user = await bot.fetch_user(int(user_id))
@@ -612,7 +503,6 @@ async def notify_expired(user_id, species, regions, lang):
         logging.warning(f"DM failed for expired notification to user {user_id}")
     except Exception as e:
         logging.error(f"Error in notify_expired: {e}")
-
 async def get_user_data(user_id):
     return {
         "settings": query_to_dict("SELECT * FROM user_settings WHERE user_id=?", user_id),
@@ -620,7 +510,6 @@ async def get_user_data(user_id):
         "blacklist": query_to_dict("SELECT shop_id FROM user_shop_blacklist WHERE user_id=?", user_id),
         "server_mappings": query_to_dict("SELECT server_id FROM server_user_mappings WHERE user_id=?", user_id)
     }
-
 async def get_owned_servers_data(user):
     owned_servers = []
     for guild in bot.guilds:
@@ -634,11 +523,9 @@ async def get_owned_servers_data(user):
         except discord.NotFound:
             continue
     return owned_servers
-
 async def query_to_dict(query, *params):
     rows = await execute_db(query, params, fetch=True)
     return [dict(row) for row in rows]
-
 async def create_temp_file(data, filename):
     def sync_task():
         json_data = json.dumps(data, indent=2, ensure_ascii=False)
@@ -650,14 +537,24 @@ async def create_temp_file(data, filename):
         filename=filename,
         description="Personal data export"
     )
-
+async def reload_shops():
+    try:
+        with open(SHOPS_DATA_FILE, "r") as f:
+            shops = json.load(f)
+            SHOP_DATA = {shop["id"]: shop for shop in shops}
+            for shop in SHOP_DATA.values():
+                await execute_db("""
+                    INSERT OR REPLACE INTO shops (id, name, country, url)
+                    VALUES (?, ?, ?, ?)
+                """, (shop["id"], shop["name"], shop["country"], shop["url"]), commit=True)
+    except Exception as e:
+        logging.error(f"Error reloading shop data: {e}")
 # Befehle
 @bot.slash_command(name="startup",description="Set the server language and where the bot should respond (only Admin/Mod)")
 @admin_or_manage_messages()
 async def setup_server(ctx, language: discord.Option(str, "Select the bot language (de = German, en = English, eo = Esperanto)", choices=["de", "en", "eo"], default="en"), channel: discord.Option(discord.TextChannel, "Channel for bot responses (optional)", required=False) = None):
     server_id = ctx.guild.id
     channel_id = channel.id if channel else None
-
     if channel_id is not None:
         await execute_db("""
             INSERT INTO server_settings (server_id, channel_id, language)
@@ -673,18 +570,15 @@ async def setup_server(ctx, language: discord.Option(str, "Select the bot langua
             ON CONFLICT(server_id) DO UPDATE SET
                 language=excluded.language
         """, (server_id, language), commit=True)
-
     await ctx.respond(
     l10n.get(
         'server_setup_success',
         language,
         channel=channel.mention if channel else l10n.get('all_channels', language)))
-
 user_settings = bot.create_group(
     name="usersetting",
     description="Set your language or shop blacklist"
 )
-
 @user_settings.command(description="Set your language")
 @allowed_channel()
 async def language(ctx, language: discord.Option(str, "Select the bot language (de = German, en = English, eo = Esperanto)", choices=["de", "en", "eo"], default="en")):
@@ -695,7 +589,6 @@ async def language(ctx, language: discord.Option(str, "Select the bot language (
     ON CONFLICT(user_id) DO UPDATE SET language=excluded.language
     """, (user_id, language), commit=True)
     await ctx.respond(l10n.get('user_setting_success', language), ephemeral=True)
-
 @user_settings.command(description="Add shop to blacklist")
 @allowed_channel()
 async def blacklist_add(ctx, shop: discord.Option(str, "Shop name or ID", required=True)):
@@ -726,7 +619,6 @@ async def blacklist_add(ctx, shop: discord.Option(str, "Shop name or ID", requir
         l10n.get('blacklist_add_success', lang, shop=shop_name),
         ephemeral=True
     )
-
 @user_settings.command(description="Remove shop from blacklist")
 @allowed_channel()
 async def blacklist_remove(ctx, shop: discord.Option(str, "Shop name or ID", required=True)):
@@ -759,7 +651,6 @@ async def blacklist_remove(ctx, shop: discord.Option(str, "Shop name or ID", req
         )
     else:
         await ctx.respond(l10n.get('shop_not_in_blacklist', lang), ephemeral=True)
-
 @user_settings.command(description="List blacklisted shops")
 @allowed_channel()
 async def blacklist_list(ctx):
@@ -778,7 +669,6 @@ async def blacklist_list(ctx):
         l10n.get('blacklist_list', lang, shops="\n- " + "\n- ".join(shops)),
         ephemeral=True
     )
-
 @user_settings.command(description="List all shops")
 @allowed_channel()
 async def shop_list(
@@ -787,8 +677,6 @@ async def shop_list(
 ):
     lang = await get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
     SHOP_DATA = await load_shop_data()
-
-    # Filter für CH-Lieferanten, falls gewünscht
     if country and country.lower() == "ch":
         try:
             ch_data = await load_ch_delivery_data()
@@ -796,14 +684,12 @@ async def shop_list(
             SHOP_DATA = {k: v for k, v in SHOP_DATA.items() if k in ch_shops}
         except Exception as e:
             logging.error(f"CH filter error: {e}")
-
     def sort_key(s):
         try:
             avg = s['average_rating']
             return (avg is None, -(avg if avg is not None else 0), s['name'].lower())
         except KeyError:
             return (True, 0, s['name'].lower())
-
     filtered_shops = []
     for shop in SHOP_DATA.values():
         if country:
@@ -811,28 +697,23 @@ async def shop_list(
                 filtered_shops.append(shop)
         else:
             filtered_shops.append(shop)
-
     if not filtered_shops:
         await ctx.respond(l10n.get('no_shops_found', lang), ephemeral=True)
         return
-
     shops_sorted = sorted(filtered_shops, key=sort_key)
     shop_entries = [
         f"`{s['id']}` | {s['name']} - "
         f"{'⭐ ' + str(round(s.get('average_rating', 0), 2)) if s.get('average_rating') else '❌'}"
         for s in shops_sorted
     ]
-
     text = l10n.get('available_shops', lang, shops="\n- " + "\n- ".join(shop_entries))
     blocks = await split_message(text)
-
     try:
         await ctx.respond(blocks[0], ephemeral=True)
         for block in blocks[1:]:
             await ctx.followup.send(block, ephemeral=True)
     except IndexError:
         await ctx.respond(l10n.get('no_shops_found', lang), ephemeral=True)
-
 @bot.slash_command(name="notification", description="Set up your notifications")
 @allowed_channel()
 async def notification(
@@ -844,7 +725,6 @@ async def notification(
 ):
     server_id = ctx.guild.id if ctx.guild else None
     lang = await get_user_lang(ctx.author.id, server_id)
-
     if swiss_only:
         try:
             ch_data = await load_ch_delivery_data()
@@ -852,22 +732,18 @@ async def notification(
         except FileNotFoundError:
             await ctx.respond(l10n.get('ch_notification_error', lang), ephemeral=True)
             return
-
         regions_list = ["ch"]
         valid_regions = ["ch"]
     else:
         regions_list = [r.strip().lower() for r in regions.split(",")] if regions else []
         regions_list = await expand_regions(regions_list)
         valid_regions = [r for r in regions_list if any(s["country"].lower() == r for s in SHOP_DATA.values())]
-
         if not valid_regions:
             available_regions = sorted({s["country"].lower() for s in SHOP_DATA.values()})
             available_regions_str = ", ".join(available_regions)
             await ctx.respond(l10n.get('invalid_regions', lang, regions=available_regions_str), ephemeral=True)
             return
-
     species_found = await species_exists(species)
-
     if species_found or force:
         try:
             rowcount = await execute_db("""
@@ -876,26 +752,20 @@ async def notification(
                 ON CONFLICT(user_id, species, regions) WHERE status='active'
                 DO UPDATE SET created_at=CURRENT_TIMESTAMP
             """, (str(ctx.author.id), species, ",".join(valid_regions)), commit=True)
-
             is_new = rowcount == 1
-
             if is_new:
                 response_key = 'notification_set_forced' if not species_found else 'notification_set'
             else:
                 response_key = 'notification_reactivated'
-
             await ctx.respond(l10n.get(response_key, lang, species=species, regions=", ".join(valid_regions)))
             await asyncio.sleep(1)
-
             if server_id:
                 await execute_db("""
                     INSERT OR IGNORE INTO server_user_mappings (user_id, server_id)
                     VALUES (?, ?)
                 """, (str(ctx.author.id), server_id))
-
             await ctx.followup.send(l10n.get('checking_availability', lang, species=species))
             await trigger_availability_check(ctx.author.id, species, ",".join(valid_regions))
-
         except sqlite3.IntegrityError:
             if force:
                 rowcount = await execute_db("""
@@ -903,7 +773,6 @@ async def notification(
                     SET created_at=CURRENT_TIMESTAMP
                     WHERE user_id=? AND species=? AND regions=? AND status='active'
                 """, (str(ctx.author.id), species, ",".join(valid_regions)), commit=True)
-
                 if rowcount > 0:
                     await ctx.respond(l10n.get('notification_reactivated', lang, species=species, regions=", ".join(valid_regions)))
                 else:
@@ -919,7 +788,6 @@ async def notification(
                 await ctx.respond(l10n.get('notification_exists_active', lang, species=species, regions=", ".join(valid_regions)), ephemeral=True)
     else:
         await ctx.respond(l10n.get('species_not_found', lang), ephemeral=True)
-
 @bot.slash_command(name="delete_notifications", description="Delete your notifications")
 @allowed_channel()
 async def delete_notifications(ctx, ids: discord.Option(str, "Enter the IDs of the notifications to delete (comma-separated)")):
@@ -948,7 +816,6 @@ async def delete_notifications(ctx, ids: discord.Option(str, "Enter the IDs of t
         commit=True
     )
     await ctx.respond(l10n.get('deleted_success', lang, ids=", ".join(map(str, user_ids))))
-
 @bot.slash_command(name="stats", description="Show relevant statistics (only Admin/Mod)")
 @allowed_channel()
 @admin_or_manage_messages()
@@ -990,28 +857,23 @@ async def stats(ctx):
         top_species="\n".join([f"- {s['species']}: {s['cnt']}" for s in top_species])
     )
     await ctx.respond(stats_msg)
-
 @bot.slash_command(name="history", description="Show your requests")
 @allowed_channel()
 async def history(ctx):
     server_id = ctx.guild.id if ctx.guild else None
     lang = await get_user_lang(ctx.author.id, server_id)
-
     try:
         history = await execute_db(
             "SELECT id, species, regions, status, created_at, notified_at FROM notifications WHERE user_id=? ORDER BY created_at DESC",
             (str(ctx.author.id),),
             fetch=True
         )
-
         if not history:
             await ctx.respond(l10n.get('history_no_entries', lang))
             return
-
         grouped_history = {"completed": [], "expired": [], "active": [], "other": []}
         for entry in history:
             grouped_history[entry[3].lower() if entry[3] else "other"].append(entry)
-
         history_msg = l10n.get('history_header', lang) + "\n"
         status_map = {
             "completed": ("history_completed", "✅"),
@@ -1019,44 +881,34 @@ async def history(ctx):
             "active": ("history_active", "🔄"),
             "other": ("history_other", "❓")
         }
-
         for status, (key, emoji) in status_map.items():
             entries = grouped_history.get(status, [])
             if not entries:
                 continue
-
             displayed = entries[:10]
             remaining = len(entries) - 10
-
             history_msg += f"\n**{l10n.get(key, lang)}**\n"
             for entry in displayed:
-
                 created_date = entry[4].split()[0]
                 notified_date = entry[5].split()[0] if entry[5] else None
-
                 params = {
                     'species': entry[1],
                     'regions': entry[2],
                     'created': created_date,
                     'id': entry[0]
                 }
-
                 if entry[3].lower() == "completed" and notified_date:
                     params['notified'] = notified_date
                     entry_msg = l10n.get('history_entry_completed', lang, **params)
                 else:
                     entry_msg = l10n.get('history_entry', lang, **params)
-
                 history_msg += f"- {entry_msg}\n"
-
             if remaining > 0:
                 history_msg += l10n.get('history_more_entries', lang, count=remaining) + "\n"
-
         await ctx.respond(history_msg)
     except Exception as e:
         logging.error(f"Error in history: {e}")
         await ctx.respond(l10n.get('general_error', lang))
-
 @bot.slash_command(name="system", description="Show system info (only Admin/Mod)")
 @allowed_channel()
 @admin_or_manage_messages()
@@ -1065,12 +917,10 @@ async def system(ctx):
     lang = await get_user_lang(ctx.author.id, server_id)
     server_count = len(bot.guilds)
     user_count = sum(guild.member_count for guild in bot.guilds)
-
     try:
         uptime = datetime.now() - bot.start_time
         total = (await execute_db("SELECT COUNT(*) FROM notifications", fetch=True))[0][0]
         integrity = (await execute_db("PRAGMA integrity_check", fetch=True))[0][0]
-
         age, modified = await get_file_age(SHOPS_DATA_FILE)
         if age is None:
             file_status = l10n.get('system_file_missing', lang)
@@ -1078,12 +928,10 @@ async def system(ctx):
             file_status = l10n.get('system_file_status', lang,
                                  modified=modified,
                                  age=age)
-
         latency = f"{bot.latency * 1000:.2f}"
         cpu = f"{psutil.cpu_percent(interval=1):.1f}"
         ram = f"{psutil.virtual_memory().percent:.1f}"
         system_info = f"{platform.system()} {platform.release()}"
-
         msg = l10n.get('system_status', lang,
                        uptime=str(uptime).split('.')[0],
                        servers=server_count,
@@ -1091,25 +939,20 @@ async def system(ctx):
                        integrity=integrity,
                        total=total,
                        file_status=file_status)
-
         perf_msg = l10n.get('system_performance', lang,
                             latency=latency,
                             cpu=cpu,
                             ram=ram,
                             system=system_info)
-
         await ctx.respond(f"{msg}\n\n{perf_msg}")
-
     except Exception as e:
         logging.error(f"Systemerror: {e}")
         await ctx.respond(l10n.get('system_error', lang))
-
 @bot.slash_command(name="help", description="All commands")
 @allowed_channel()
 async def help(ctx):
     server_id = ctx.guild.id if ctx.guild else None
     lang = await get_user_lang(ctx.author.id, server_id)
-
     try:
         commands = "\n".join([
             l10n.get('help_notification', lang),
@@ -1129,7 +972,6 @@ async def help(ctx):
     except Exception as e:
         logging.error(f"Help error: {e}")
         await ctx.respond(l10n.get('general_error', lang))
-
 @bot.slash_command(name="testnotification", description="Test PN notifications")
 @allowed_channel()
 async def testnotification(ctx):
@@ -1140,20 +982,17 @@ async def testnotification(ctx):
         await ctx.respond(l10n.get('testnotification_success', lang), ephemeral=True)
     except discord.Forbidden:
         await ctx.respond(l10n.get('testnotification_forbidden', lang), ephemeral=True)
-
 @bot.slash_command(name="reloadshops", description="Reload shop data from JSON file (only Admin/Mod)")
 @admin_or_manage_messages()
 @allowed_channel()
 async def reloadshops(ctx):
     await reload_shops()
     await ctx.respond("Store data has been reloaded.", ephemeral=True)
-
 shopmapping = bot.create_group(
     name="shopmapping",
     description="Manage shop name mappings for Google Sheets imports! (only for AAM-Discord)",
     guild_ids=SERVER_IDS
 )
-
 @shopmapping.command(name="add", description="Assign external shop name to internal ID (only for AAM-Discord)")
 @admin_or_manage_messages()
 @allowed_channel()
@@ -1163,18 +1002,15 @@ async def shopmapping_add(
     shop_id: discord.Option(str, "Internal shop ID")
 ):
     lang = await get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
-
     if shop_id not in SHOP_DATA:
         await ctx.respond(l10n.get("shopmapping_add_invalid_id", lang), ephemeral=True)
         return
-
     try:
         await execute_db("""
             INSERT INTO shop_name_mappings (external_name, shop_id)
             VALUES (?, ?)
             ON CONFLICT(external_name) DO UPDATE SET shop_id=excluded.shop_id
         """, (external_name.strip(), shop_id), commit=True)
-
         await ctx.respond(
             l10n.get("shopmapping_add_success", lang, external=external_name, id=shop_id, shop=SHOP_DATA[shop_id]['name']),
             ephemeral=True
@@ -1182,7 +1018,6 @@ async def shopmapping_add(
     except Exception as e:
         logging.error(f"Shopmapping add error: {e}")
         await ctx.respond(l10n.get("shopmapping_add_error", lang), ephemeral=True)
-
 @shopmapping.command(name="show", description="Show all current mappings (only for AAM-Discord)")
 @admin_or_manage_messages()
 @allowed_channel()
@@ -1199,7 +1034,6 @@ async def shopmapping_show(ctx):
         shop_name = SHOP_DATA.get(shop_id, {}).get('name', 'Unknown')
         msg.append(l10n.get("shopmapping_show_entry", lang, external=ext_name, id=shop_id, shop=shop_name))
     await ctx.respond("\n".join(msg), ephemeral=True)
-
 @shopmapping.command(name="remove", description="Remove a shop mapping (only for AAM-Discord)")
 @admin_or_manage_messages()
 @allowed_channel()
@@ -1209,12 +1043,10 @@ async def shopmapping_remove(
 ):
     lang = await get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
     rowcount = await execute_db("DELETE FROM shop_name_mappings WHERE external_name=?", (external_name,), commit=True)
-
     if rowcount > 0:
         await ctx.respond(l10n.get("shopmapping_remove_success", lang, external=external_name), ephemeral=True)
     else:
         await ctx.respond(l10n.get("shopmapping_remove_none", lang), ephemeral=True)
-
 @bot.slash_command(name="serverlist", description="Shows all server information (only for bot owners)")
 @owner_only()
 @allowed_channel()
@@ -1223,9 +1055,7 @@ async def serverlist(ctx):
         lang = await get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
         await ctx.respond(l10n.get('no_permission', lang), ephemeral=True)
         return
-
     lang = await get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
-
     messages = []
     for guild in bot.guilds:
         info = (
@@ -1240,38 +1070,30 @@ async def serverlist(ctx):
             "---------------------------"
         )
         messages.append(info)
-
     for block in await split_message("\n".join(messages)):
         await ctx.respond(block, ephemeral=True)
-
 @bot.slash_command(name="export_data", description="Export all your saved data as JSON")
 @allowed_channel()
 async def export_data(ctx):
     user_id = str(ctx.author.id)
     lang = await get_user_lang(user_id, ctx.guild.id if ctx.guild else None)
-    
     try:
         owned_servers = await get_owned_servers_data(ctx.author)
-        
         user_data = {
             "user_info": await get_user_data(user_id),
             "servers": owned_servers
         }
-
         user_file = await create_temp_file(user_data["user_info"], f"user_{user_id}.json")
         files = [user_file]
-
         if owned_servers:
             server_file = await create_temp_file(owned_servers, f"servers_{user_id}.json")
             files.append(server_file)
             logging.info(f"Server export for {user_id} with {len(owned_servers)} servers")
-
         await ctx.author.send(
             l10n.get('data_export_success', lang),
             files=files
         )
         await ctx.respond(l10n.get('data_export_dm_sent', lang), ephemeral=True)
-
     except Exception as e:
         logging.error(f"Export error: {e}")
         await ctx.respond(l10n.get('data_export_error', lang), ephemeral=True)
@@ -1279,100 +1101,79 @@ async def export_data(ctx):
         for f in files:
             if os.path.exists(f.filename):
                 os.remove(f.filename)
-
 ch_delivery = bot.create_group(
     name="ch_delivery",
     description="Management of stores that deliver to Switzerland (only for AAM-Discord)",
     guild_ids=SERVER_IDS
 )
-
 @ch_delivery.command(description="Add store to CH delivery list (only for AAM-Discord)")
 @allowed_channel()
 async def add(ctx, shop_id: discord.Option(str, "Shop-ID")):
     user_id = str(ctx.author.id)
     lang = await get_user_lang(user_id, ctx.guild.id if ctx.guild else None)
-    
     current_data = await load_ch_delivery_data()
-    
     if shop_id not in SHOP_DATA:
         await ctx.respond(l10n.get('shop_not_found', lang), ephemeral=True)
         return
-    
     if any(entry["shop_id"] == shop_id for entry in current_data):
         await ctx.respond(
             l10n.get('ch_delivery_exists', lang, shop=SHOP_DATA[shop_id]['name']),
             ephemeral=True
         )
         return
-    
     new_entry = {
         "shop_id": shop_id,
         "added_by": user_id,
         "added_at": datetime.now().isoformat()
     }
-    
     current_data.append(new_entry)
     await save_ch_delivery_data(current_data)
-    
     await ctx.respond(
         l10n.get('ch_delivery_add_success', lang, 
                 shop=SHOP_DATA[shop_id]['name']),
         ephemeral=True
     )
-
 @ch_delivery.command(description="Remove store from CH delivery list (only for AAM-Discord and Admin/Mod)")
 @admin_or_manage_messages()
 @allowed_channel()
 async def remove(ctx, shop_id: discord.Option(str, "Shop-ID")):
     lang = await get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
-    
     current_data = await load_ch_delivery_data()
     initial_count = len(current_data)
-    
     new_data = [entry for entry in current_data if entry["shop_id"] != shop_id]
-    
     if len(new_data) == initial_count:
         await ctx.respond(
             l10n.get('ch_delivery_not_found', lang),
             ephemeral=True
         )
         return
-    
     await save_ch_delivery_data(new_data)
-    
     await ctx.respond(
         l10n.get('ch_delivery_remove_success', lang,
                 shop=SHOP_DATA.get(shop_id, {}).get('name', shop_id)),
         ephemeral=True
     )
-
 @ch_delivery.command(description="Show list of all CH suppliers (only for AAM-Discord)")
 @allowed_channel()
 async def list(ctx):
     lang = await get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
     current_data = await load_ch_delivery_data()
-    
     if not current_data:
         await ctx.respond(l10n.get('ch_delivery_empty', lang), ephemeral=True)
         return
-    
     entries = []
     for entry in current_data:
         shop = SHOP_DATA.get(entry["shop_id"], {})
         user = await bot.fetch_user(int(entry["added_by"]))
         timestamp = datetime.fromisoformat(entry["added_at"]).strftime("%d.%m.%Y %H:%M")
-        
         entries.append(
             l10n.get('ch_delivery_entry', lang,
                     shop=shop.get('name', 'Unbekannt'),
                     user=user.display_name,
                     timestamp=timestamp)
         )
-    
     message = l10n.get('ch_delivery_header', lang) + "\n\n" + "\n".join(entries)
-    
     await ctx.respond(message[:2000], ephemeral=True)
-
 # Automatisierte Aufgaben
 @tasks.loop(hours=168)
 async def optimize_db():
@@ -1382,23 +1183,18 @@ async def optimize_db():
         logging.info("VACUUM and OPTIMIZE completed successfully.")
     except Exception as e:
         logging.error(f"VACUUM/OPTIMIZE error: {e}")
-
 @tasks.loop(hours=48)
 async def sync_ratings():
     try:
         raw_data = await load_shop_data_from_google_sheets()
-
         all_mappings = await execute_db("SELECT external_name, shop_id FROM shop_name_mappings", fetch=True)
-
         for row in raw_data:
             shop_name, _, rating = row
             shop_id = None
-
             for ext_name, mapped_id in all_mappings:
                 if ext_name.casefold() == shop_name.casefold():
                     shop_id = mapped_id
                     break
-
             if not shop_id:
                 matches = process.extractOne(
                     shop_name,
@@ -1409,17 +1205,14 @@ async def sync_ratings():
                     shop_id = next(k for k,v in SHOP_DATA.items() if v["name"] == matches[0])
                 else:
                     continue
-
             await execute_db("""
                 UPDATE shops
                 SET average_rating = ?
                 WHERE id = ?
             """, (float(rating.replace(',', '.')), shop_id), commit=True)
-
-        load_shop_data()
+        await load_shop_data()
     except Exception as e:
         logging.error(f"Rating sync failed: {e}")
-
 @tasks.loop(hours=24)
 async def clean_old_notifications():
     try:
@@ -1429,12 +1222,10 @@ async def clean_old_notifications():
             FROM notifications
             WHERE created_at < ? AND status='active'
         """, (cutoff.strftime('%Y-%m-%d'),), fetch=True)
-
         await execute_db("""
             UPDATE notifications SET status='expired'
             WHERE created_at < ? AND status='active'
         """, (cutoff.strftime('%Y-%m-%d'),), commit=True)
-
         for row in expired:
             notif_id, user_id, species, regions = row["id"], row["user_id"], row["species"], row["regions"]
             lang = await get_user_lang(user_id, None)
@@ -1442,24 +1233,20 @@ async def clean_old_notifications():
         logging.info(f"Old notifications cleaned up and users notified")
     except Exception as e:
         logging.error(f"Error during cleanup: {e}")
-
 @tasks.loop(hours=2)
 async def update_server_infos():
     for guild in bot.guilds:
         await update_server_info(guild)
     await remove_left_servers(bot)
-
 @tasks.loop(hours=1)
 async def reload_shops_task():
     await reload_shops()
-
 @tasks.loop(minutes=5)
 async def check_availability():
     rows = await execute_db("SELECT user_id, species, regions FROM notifications WHERE status='active'", fetch=True)
     for row in rows:
         user_id, species, regions = row["user_id"], row["species"], row["regions"]
         await trigger_availability_check(user_id, species, regions)
-
 @tasks.loop(seconds=60)
 async def update_bot_status():
     current_time = datetime.now()
@@ -1472,7 +1259,6 @@ async def update_bot_status():
     status_message = (
         f"Uptime: {uptime_days}d {uptime_hours}h {uptime_minutes}m")
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=status_message))
-
 @bot.event
 async def on_ready():
     global EU_COUNTRY_CODES, SHOP_DATA
@@ -1481,19 +1267,16 @@ async def on_ready():
     def init_db():
         init_conn = sqlite3.connect(BASE_DIR / "antcheckbot.db")
         init_cursor = init_conn.cursor()
-        
         init_cursor.executescript("""
             CREATE TABLE IF NOT EXISTS server_settings (
                 server_id INTEGER PRIMARY KEY,
                 channel_id INTEGER,
                 language TEXT DEFAULT 'en'
             );
-
             CREATE TABLE IF NOT EXISTS user_settings (
                 user_id INTEGER PRIMARY KEY,
                 language TEXT
             );
-
             CREATE TABLE IF NOT EXISTS shops (
                 id TEXT PRIMARY KEY,
                 name TEXT,
@@ -1501,7 +1284,6 @@ async def on_ready():
                 url TEXT,
                 average_rating REAL
             );
-
             CREATE TABLE IF NOT EXISTS notifications (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT,
@@ -1511,18 +1293,15 @@ async def on_ready():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 notified_at TIMESTAMP
             );
-
             CREATE TABLE IF NOT EXISTS global_stats (
                 key TEXT PRIMARY KEY,
                 value INTEGER DEFAULT 0
             );
-
             CREATE TABLE IF NOT EXISTS server_user_mappings (
                 user_id TEXT,
                 server_id INTEGER,
                 PRIMARY KEY (user_id, server_id)
             );
-
             CREATE TABLE IF NOT EXISTS user_shop_blacklist (
                 user_id TEXT,
                 shop_id TEXT,
@@ -1530,13 +1309,11 @@ async def on_ready():
                 FOREIGN KEY (user_id) REFERENCES notifications(user_id),
                 FOREIGN KEY (shop_id) REFERENCES shops(id)
             );
-
             CREATE TABLE IF NOT EXISTS shop_name_mappings (
                 external_name TEXT PRIMARY KEY,
                 shop_id TEXT,
                 FOREIGN KEY (shop_id) REFERENCES shops(id)
             );
-
             CREATE TABLE IF NOT EXISTS server_info (
                 server_id INTEGER PRIMARY KEY,
                 server_name VARCHAR(100) NOT NULL,
@@ -1547,24 +1324,17 @@ async def on_ready():
                 banner_url TEXT,
                 description TEXT
             );
-
             CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_active_notification
             ON notifications(user_id, species, regions) WHERE status='active';
-
             CREATE INDEX IF NOT EXISTS idx_notifications_status ON notifications(status);
-
             INSERT OR IGNORE INTO global_stats (key, value) VALUES ('deleted_notifications', 0);
         """)
         init_conn.commit()
         init_conn.close()
-
     await bot.loop.run_in_executor(None, init_db)
-
     bot.start_time = datetime.now()
     logging.info(f"Bot online: {bot.user.name}")
-
     await bot.sync_commands()
-
     clean_old_notifications.start()
     check_availability.start()
     update_bot_status.start()
@@ -1574,17 +1344,14 @@ async def on_ready():
     sync_ratings.start()
     update_server_infos.start()
     logging.info(f"Bot final loaded")
-
 @bot.event
 async def on_application_command_error(ctx, error):
     if isinstance(error, discord.errors.CheckFailure):
-
         if not ctx.response.is_done():
             lang = await get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
             await ctx.respond(l10n.get('no_permission', lang), ephemeral=True)
     else:
         logging.error(f"Command error: {error}", exc_info=True)
-
 if __name__ == "__main__":
     LOCALES_DIR.mkdir(exist_ok=True)
     bot.run(TOKEN)
