@@ -53,6 +53,7 @@ DATA_DIRECTORY = "DIR"
 SHOPS_DATA_FILE = "shops_data.json"
 SERVER_IDS = [ID1, ID2]
 BOT_OWNER = USERID
+EU_COUNTRIES_FILE = "eu_countries.json"
 
 intents = discord.Intents.default()
 intents.messages = True
@@ -77,6 +78,14 @@ def setup_logger():
     logger.addHandler(console_handler)
 
 setup_logger()
+
+# EU Liste laden
+def load_eu_countries():
+    with open(EU_COUNTRIES_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+        return [entry["code"].lower() for entry in data]
+
+EU_COUNTRY_CODES = load_eu_countries()
 
 # Datenbankverbindung
 conn = sqlite3.connect(BASE_DIR / "antcheckbot.db")
@@ -447,6 +456,13 @@ def get_guild_info(guild):
         str(guild.banner.url) if guild.banner else None,
         guild.description or None
     )
+
+def expand_regions(regions):
+    regions = [r.strip().lower() for r in regions]
+    if "eu" in regions:
+        regions = [r for r in regions if r != "eu"]
+        regions = list(set(regions + EU_COUNTRY_CODES))
+    return regions
 
 async def update_server_info(guild):
     data = get_guild_info(guild)
@@ -837,6 +853,7 @@ async def notification(ctx, species: discord.Option(str, "Which species do you w
     lang = get_user_lang(ctx.author.id, server_id)
 
     regions_list = [r.strip().lower() for r in regions.split(",")]
+    regions_list = expand_regions(regions_list)
     valid_regions = [r for r in regions_list if any(s["country"].lower() == r for s in SHOP_DATA.values())]
 
     if not valid_regions:
