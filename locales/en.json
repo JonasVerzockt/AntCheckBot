@@ -79,5 +79,8 @@
     "serverlist_no_description": "🚫 No description",
     "serverlist_created": "📅 Created at",
     "help_showservers": "/serverlist - Show all current servers, as a private message (only you can see it), that use the bot (bot owner only!)",
+    "data_export_success": "Your exported data is attached 📎",
+    "data_export_dm_sent": "The data has been sent via DM ✅",
+    "data_export_error": "Export error ❌ Please try again later",
     "general_error": "❌ An error has occurred"
 }

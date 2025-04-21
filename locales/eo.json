@@ -79,5 +79,8 @@
     "serverlist_no_description": "🚫 Neniu priskribo",
     "serverlist_created": "📅 Kreita je",
     "help_showservers": "/serverlist - Montru ĉiujn nunajn servilojn, kiel sekreta mesaĝo (nur vi povas vidi ĝin), kiuj uzas la bot-on (nur por la bot-posedanto!)",
+    "data_export_success": "Viaj eksportitaj datumoj estas aldonitaj 📎",
+    "data_export_dm_sent": "La datumoj estas senditaj per DM ✅",
+    "data_export_error": "Eraro dum eksporto ❌ Bonvolu reprovi poste",
     "general_error": "❌ Okazis eraro"
 }
