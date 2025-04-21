@@ -1064,8 +1064,8 @@ async def system(ctx):
 
         msg = l10n.get('system_status', lang,
                        uptime=str(uptime).split('.')[0],
-                       server_count=server_count,
-                       user_count=user_count,
+                       servers=server_count,
+                       users=user_count,
                        integrity=integrity,
                        total=total,
                        file_status=file_status)
