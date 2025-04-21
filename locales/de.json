@@ -79,5 +79,8 @@
     "serverlist_no_description": "🚫 Keine Beschreibung",
     "serverlist_created": "📅 Erstellt am",
     "help_showservers": "/serverlist - Zeige alle aktuelle Server, als geheime Nachricht (nur du kannst es sehen), die den Bot nutzen (nur für den Botbesitzer!)",
+    "data_export_success": "Deine exportierten Daten im Anhang 📎",
+    "data_export_dm_sent": "Die Daten wurden dir per PN gesendet ✅",
+    "data_export_error": "Fehler beim Export ❌ Bitte versuche es später erneut",
     "general_error": "❌ Ein Fehler ist aufgetreten"
 }

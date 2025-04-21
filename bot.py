@@ -605,6 +605,40 @@ async def notify_expired(user_id, species, regions, lang):
     except Exception as e:
         logging.error(f"Error in notify_expired: {e}")
 
+async def get_user_data(user_id):
+    return {
+        "settings": query_to_dict("SELECT * FROM user_settings WHERE user_id=?", user_id),
+        "notifications": query_to_dict("SELECT * FROM notifications WHERE user_id=?", user_id),
+        "blacklist": query_to_dict("SELECT shop_id FROM user_shop_blacklist WHERE user_id=?", user_id),
+        "server_mappings": query_to_dict("SELECT server_id FROM server_user_mappings WHERE user_id=?", user_id)
+    }
+
+async def get_owned_servers_data(user):
+    return [
+        {
+            "server_info": query_to_dict("SELECT * FROM server_info WHERE server_id=?", guild.id),
+            "server_settings": query_to_dict("SELECT * FROM server_settings WHERE server_id=?", guild.id)
+        }
+        for guild in bot.guilds if guild.owner_id == user.id
+    ]
+
+def query_to_dict(query, *params):
+    cursor.execute(query, params)
+    columns = [col[0] for col in cursor.description]
+    return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+async def create_temp_file(data, filename):
+    json_data = json.dumps(data, indent=2, ensure_ascii=False)
+    
+    with open(filename, 'w', encoding='utf-8') as f:
+        f.write(json_data)
+    
+    return discord.File(
+        filename, 
+        filename=filename,
+        description="Personal data export"
+    )
+
 # Befehle
 @bot.slash_command(name="startup",description="Set the server language and where the bot should respond (only Admin/Mod)")
 @admin_or_manage_messages()
@@ -1220,6 +1254,39 @@ async def serverlist(ctx):
 
     for block in split_message("\n".join(messages)):
         await ctx.respond(block, ephemeral=True)
+
+@bot.slash_command(name="export_data", description="Export all your saved data as JSON")
+@allowed_channel()
+async def export_data(ctx):
+    user_id = str(ctx.author.id)
+    lang = get_user_lang(user_id, ctx.guild.id if ctx.guild else None)
+    
+    try:
+        user_data = {
+            "user_info": await get_user_data(user_id),
+            "servers": await get_owned_servers_data(ctx.author)
+        }
+
+        user_file = await create_temp_file(user_data["user_info"], f"user_{user_id}.json")
+        files = [user_file]
+
+        if user_data["servers"]:
+            server_file = await create_temp_file(user_data["servers"], f"servers_{user_id}.json")
+            files.append(server_file)
+
+        await ctx.author.send(
+            l10n.get('data_export_success', lang),
+            files=files
+        )
+        await ctx.respond(l10n.get('data_export_dm_sent', lang), ephemeral=True)
+
+    except Exception as e:
+        logging.error(f"Export error: {e}")
+        await ctx.respond(l10n.get('data_export_error', lang), ephemeral=True)
+    finally:
+        for f in files:
+            if os.path.exists(f.filename):
+                os.remove(f.filename)
 
 # Automatisierte Aufgaben
 @tasks.loop(hours=168)
