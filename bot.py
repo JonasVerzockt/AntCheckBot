@@ -393,7 +393,7 @@ def load_shop_data_from_google_sheets():
             token.write(creds.to_json())
 
     try:
-        service = build('sheets', 'v4', credentials=creds)
+        service = build('sheets', 'v4', credentials=creds, cache_discovery=False)
         sheet = service.spreadsheets()
         result = sheet.values().get(spreadsheetId=SPREADSHEET_ID, range=RANGE_NAME).execute()
         values = result.get('values', [])
@@ -450,11 +450,11 @@ def get_guild_info(guild):
 
 async def update_server_info(guild):
     data = get_guild_info(guild)
-    
+
     cursor.execute("""
         INSERT INTO server_info (
-            server_id, server_name, member_count, 
-            created_at, icon_url, splash_url, 
+            server_id, server_name, member_count,
+            created_at, icon_url, splash_url,
             banner_url, description
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -902,7 +902,7 @@ async def delete_notifications(ctx, ids: discord.Option(str, "Enter the IDs of t
 async def stats(ctx):
     server_id = ctx.guild.id if ctx.guild else None
     lang = get_user_lang(ctx.author.id, server_id)
-    
+
     try:
         cursor.execute("SELECT COALESCE(COUNT(*), 0) FROM notifications WHERE status='active'")
         active = cursor.fetchone()[0]
@@ -1033,7 +1033,7 @@ async def system(ctx):
     lang = get_user_lang(ctx.author.id, server_id)
     server_count = len(bot.guilds)
     user_count = sum(guild.member_count for guild in bot.guilds)
-    
+
     try:
         uptime = datetime.now() - bot.start_time
         cursor.execute("SELECT COUNT(*) FROM notifications")
@@ -1051,13 +1051,12 @@ async def system(ctx):
         latency = f"{bot.latency * 1000:.2f}"
         cpu = f"{psutil.cpu_percent(interval=1):.1f}"
         ram = f"{psutil.virtual_memory().percent:.1f}"
-        server_count = len(bot.guilds)
-        user_count = sum(guild.member_count for guild in bot.guilds)
         system_info = f"{platform.system()} {platform.release()}"
 
         msg = l10n.get('system_status', lang,
                        uptime=str(uptime).split('.')[0],
-                       server_count=server_count
+                       server_count=server_count,
+                       user_count=user_count,
                        integrity=integrity,
                        total=total,
                        file_status=file_status)
@@ -1066,8 +1065,6 @@ async def system(ctx):
                             latency=latency,
                             cpu=cpu,
                             ram=ram,
-                            servers=server_count,
-                            users=user_count,
                             system=system_info)
 
         await ctx.respond(f"{msg}\n\n{perf_msg}")
@@ -1093,7 +1090,8 @@ async def help(ctx):
             l10n.get('help_startup', lang),
             l10n.get('help_usersetting', lang),
             l10n.get('help_reloadshops', lang),
-            l10n.get('help_shopmapping', lang)
+            l10n.get('help_shopmapping', lang),
+            l10n.get('help_showservers', lang)
         ])
         await ctx.respond(l10n.get('help_full', lang, commands=commands))
     except Exception as e:
@@ -1120,11 +1118,11 @@ async def reloadshops(ctx):
 
 shopmapping = bot.create_group(
     name="shopmapping",
-    description="Manage shop name mappings for Google Sheets imports!",
+    description="Manage shop name mappings for Google Sheets imports! (only for AAM-Discord)",
     guild_ids=SERVER_IDS
 )
 
-@shopmapping.command(name="add", description="Assign external shop name to internal ID")
+@shopmapping.command(name="add", description="Assign external shop name to internal ID (only for AAM-Discord)")
 @admin_or_manage_messages()
 async def shopmapping_add(
     ctx,
@@ -1153,7 +1151,7 @@ async def shopmapping_add(
         logging.error(f"Shopmapping add error: {e}")
         await ctx.respond(l10n.get("shopmapping_add_error", lang), ephemeral=True)
 
-@shopmapping.command(name="show", description="Show all current mappings")
+@shopmapping.command(name="show", description="Show all current mappings (only for AAM-Discord)")
 @admin_or_manage_messages()
 async def shopmapping_show(ctx):
     lang = get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
@@ -1171,7 +1169,7 @@ async def shopmapping_show(ctx):
 
     await ctx.respond("\n".join(msg), ephemeral=True)
 
-@shopmapping.command(name="remove", description="Remove a shop mapping")
+@shopmapping.command(name="remove", description="Remove a shop mapping (only for AAM-Discord)")
 @admin_or_manage_messages()
 async def shopmapping_remove(
     ctx,
@@ -1186,7 +1184,7 @@ async def shopmapping_remove(
     else:
         await ctx.respond(l10n.get("shopmapping_remove_none", lang), ephemeral=True)
 
-@bot.slash_command(name="serverlist", description="Zeigt alle Serverinfos (nur für Botbesitzer)")
+@bot.slash_command(name="serverlist", description="Shows all server information (only for bot owners)")
 @owner_only()
 async def serverlist(ctx):
     if ctx.author.id != BOT_OWNER:
@@ -1202,9 +1200,9 @@ async def serverlist(ctx):
             f"**{guild.name}**\n"
             f"{l10n.get('serverlist_id', lang)}: `{guild.id}`\n"
             f"{l10n.get('serverlist_members', lang)}: {guild.member_count}\n"
-            f"{l10n.get('serverlist_icon', lang)}: {guild.icon.url if guild.icon else l10n.get('serverlist_no_icon', lang)}\n"
-            f"{l10n.get('serverlist_splash', lang)}: {guild.splash.url if guild.splash else l10n.get('serverlist_no_splash', lang)}\n"
-            f"{l10n.get('serverlist_banner', lang)}: {guild.banner.url if guild.banner else l10n.get('serverlist_no_banner', lang)}\n"
+            f"{l10n.get('serverlist_icon', lang)}: <{guild.icon.url if guild.icon else l10n.get('serverlist_no_icon', lang)}>\n"
+            f"{l10n.get('serverlist_splash', lang)}: <{guild.splash.url if guild.splash else l10n.get('serverlist_no_splash', lang)}>\n"
+            f"{l10n.get('serverlist_banner', lang)}: <{guild.banner.url if guild.banner else l10n.get('serverlist_no_banner', lang)}>\n"
             f"{l10n.get('serverlist_description', lang)}: {guild.description or l10n.get('serverlist_no_description', lang)}\n"
             f"{l10n.get('serverlist_created', lang)}: {guild.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
             "---------------------------"
