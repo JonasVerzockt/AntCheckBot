@@ -306,6 +306,12 @@ def get_guild_info(guild):
         str(guild.banner.url) if guild.banner else None,
         guild.description or None
     )
+def format_rating(rating):
+    try:
+        rating = float(rating)
+        return f"⭐ {rating:.2f}"
+    except (TypeError, ValueError):
+        return "❌"
 async def expand_regions(regions):
     regions = [r.strip().lower() for r in regions]
     if "eu" in regions:
@@ -341,8 +347,18 @@ async def save_ch_delivery_data(data):
             json.dump(data, f, indent=2, ensure_ascii=False)
     await bot.loop.run_in_executor(None, sync_task)
 async def load_shop_data():
-    rows = await execute_db("SELECT id, name, country, url, average_rating FROM shops", fetch=True)
-    return {row['id']: dict(row) for row in rows}
+    def load_json():
+        with open(SHOPS_DATA_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    shops_json = await bot.loop.run_in_executor(None, load_json)
+    rows = await execute_db("SELECT id, average_rating FROM shops", fetch=True)
+    ratings = {str(row["id"]): row["average_rating"] for row in rows}
+    shop_data = {}
+    for shop in shops_json:
+        shop_id = str(shop["id"])
+        shop_data[shop_id] = dict(shop)
+        shop_data[shop_id]["average_rating"] = ratings.get(shop_id)
+    return shop_data
 async def update_server_info(guild):
     data = get_guild_info(guild)
     await execute_db("""
@@ -423,9 +439,9 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False):
         header = l10n.get('availability_header', lang, species=species)
         message_entries = [header]
         for product in available:
-            shop_id = product['shop_id']
-            rating = await get_shop_rating(product['shop_id'])
-            rating_str = f"⭐ {rating:.2f}" if rating else "❌"
+            shop_id = str(product['shop_id'])
+            rating = await get_shop_rating(shop_id)
+            rating_str = format_rating(rating)
             message_entries.append(l10n.get(
                 'availability_entry',
                 lang,
@@ -546,7 +562,7 @@ async def reload_shops():
                 await execute_db("""
                     INSERT OR REPLACE INTO shops (id, name, country, url)
                     VALUES (?, ?, ?, ?)
-                """, (shop["id"], shop["name"], shop["country"], shop["url"]), commit=True)
+                """, (str(shop["id"]), shop["name"], shop["country"], shop["url"]), commit=True)
     except Exception as e:
         logging.error(f"Error reloading shop data: {e}")
 async def get_file_age(filename):
@@ -617,7 +633,7 @@ async def blacklist_add(ctx, shop: discord.Option(str, "Shop name or ID", requir
         )
         return
     shop_name = best_match[0]
-    shop_id = next(s_id for s_id, name in shop_names.items() if name == shop_name)
+    shop_id = str(next(s_id for s_id, name in shop_names.items() if name == shop_name))
     await execute_db(
         """
         INSERT INTO user_shop_blacklist (user_id, shop_id)
@@ -647,7 +663,7 @@ async def blacklist_remove(ctx, shop: discord.Option(str, "Shop name or ID", req
         )
         return
     shop_name = best_match[0]
-    shop_id = next(s_id for s_id, name in shop_names.items() if name == shop_name)
+    shop_id = str(next(s_id for s_id, name in shop_names.items() if name == shop_name))
     rowcount = await execute_db(
         """
         DELETE FROM user_shop_blacklist
@@ -673,7 +689,7 @@ async def blacklist_list(ctx):
         (user_id,),
         fetch=True
     )
-    shops = [SHOP_DATA[row["shop_id"]]["name"] for row in rows if row["shop_id"] in SHOP_DATA]
+    shops = [SHOP_DATA[str(row["shop_id"])]["name"] for row in rows if str(row["shop_id"]) in SHOP_DATA]
     if not shops:
         await ctx.respond(l10n.get('blacklist_empty', lang), ephemeral=True)
         return
@@ -714,8 +730,7 @@ async def shop_list(
         return
     shops_sorted = sorted(filtered_shops, key=sort_key)
     shop_entries = [
-        f"`{s['id']}` | {s['name']} - "
-        f"{'⭐ ' + str(round(s.get('average_rating', 0), 2)) if s.get('average_rating') else '❌'}"
+        f"`{s['id']}` | {s['name']} - {format_rating(s.get('average_rating'))}"
         for s in shops_sorted
     ]
     text = l10n.get('available_shops', lang, shops="\n- " + "\n- ".join(shop_entries))
@@ -1000,6 +1015,8 @@ async def testnotification(ctx):
 @allowed_channel()
 async def reloadshops(ctx):
     await reload_shops()
+    global SHOP_DATA
+    SHOP_DATA = await load_shop_data()
     await ctx.respond("Store data has been reloaded.", ephemeral=True)
 shopmapping = bot.create_group(
     name="shopmapping",
@@ -1015,6 +1032,7 @@ async def shopmapping_add(
     shop_id: discord.Option(str, "Internal shop ID")
 ):
     lang = await get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
+    shop_id = str(shop_id)
     if shop_id not in SHOP_DATA:
         await ctx.respond(l10n.get("shopmapping_add_invalid_id", lang), ephemeral=True)
         return
@@ -1125,10 +1143,11 @@ async def add(ctx, shop_id: discord.Option(str, "Shop-ID")):
     user_id = str(ctx.author.id)
     lang = await get_user_lang(user_id, ctx.guild.id if ctx.guild else None)
     current_data = await load_ch_delivery_data()
+    shop_id = str(shop_id)
     if shop_id not in SHOP_DATA:
         await ctx.respond(l10n.get('shop_not_found', lang), ephemeral=True)
         return
-    if any(entry["shop_id"] == shop_id for entry in current_data):
+    if any(str(entry["shop_id"]) == shop_id for entry in current_data):
         await ctx.respond(
             l10n.get('ch_delivery_exists', lang, shop=SHOP_DATA[shop_id]['name']),
             ephemeral=True
@@ -1254,6 +1273,8 @@ async def update_server_infos():
 @tasks.loop(hours=1)
 async def reload_shops_task():
     await reload_shops()
+    global SHOP_DATA
+    SHOP_DATA = await load_shop_data()
 @tasks.loop(minutes=5)
 async def check_availability():
     rows = await execute_db("SELECT user_id, species, regions FROM notifications WHERE status='active'", fetch=True)
