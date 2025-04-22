@@ -313,6 +313,9 @@ def format_rating(rating):
     except (TypeError, ValueError):
         return "❌"
 async def expand_regions(regions):
+    global EU_COUNTRY_CODES
+    if not EU_COUNTRY_CODES:
+        EU_COUNTRY_CODES = await load_eu_countries()
     regions = [r.strip().lower() for r in regions]
     if "eu" in regions:
         regions = [r for r in regions if r != "eu"]
