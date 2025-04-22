@@ -424,6 +424,7 @@ async def remove_left_servers(bot):
     for guild_id in left_guild_ids:
         await execute_db("DELETE FROM server_info WHERE server_id = ?", (guild_id,), commit=True)
 async def trigger_availability_check(user_id, species, regions, ch_mode=False):
+    global SHOP_DATA
     try:
         server_id = None
         lang = await get_user_lang(user_id, server_id)
@@ -433,19 +434,20 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False):
                 with open("shops_ch_delivery.json", "r", encoding="utf-8") as f:
                     ch_data = json.load(f)
                     ch_shops = [str(entry["shop_id"]) for entry in ch_data]
-                    logging.debug(f"CH delivery list with {len(ch_shops)} stores loaded")
+                    logging.info(f"CH delivery list with {len(ch_shops)} stores loaded for check")
                 regions_list = ["ch"]
             except FileNotFoundError:
-                logging.error("CH delivery file not found")
+                logging.error("CH delivery file 'shops_ch_delivery.json' not found")
                 return
             except json.JSONDecodeError:
-                logging.error("Invalid JSON format in CH delivery file")
+                logging.error("Invalid JSON format in CH delivery file 'shops_ch_delivery.json'")
                 return
             except Exception as e:
-                logging.error(f"Error loading CH data: {e}")
+                logging.error(f"Error loading CH data from 'shops_ch_delivery.json': {e}")
                 return
         else:
             regions_list = regions.split(",") if isinstance(regions, str) else regions
+            regions_list = expand_regions(regions_list)
         try:
             available = await check_availability_for_species(
                 species,
@@ -455,38 +457,59 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False):
                 ch_shops=ch_shops
             )
         except FileNotFoundError as e:
-            logging.error(f"Missing product file: {e.filename}")
+            logging.error(f"Missing product file during availability check: {e.filename}")
             return
         except Exception as e:
-            logging.error(f"Error during availability check: {e}", exc_info=True)
+            logging.error(f"Error during availability check function call: {e}", exc_info=True)
             return
         if not available:
-            logging.debug(f"No available products for {species} in {regions}")
+            logging.debug(f"No available products found for {species} in {regions}")
             return
         user = None
         try:
             user = await bot.fetch_user(int(user_id))
-            logging.debug(f"User type: {type(user)}")
+            logging.debug(f"Fetched user object type: {type(user)} for ID: {user_id}")
         except discord.NotFound:
-            logging.error(f"User {user_id} not found.")
+            logging.error(f"User {user_id} not found via fetch_user.")
             return
         except discord.HTTPException as e:
-            logging.error(f"HTTP-Error: {e}")
+            logging.error(f"HTTP error fetching user {user_id}: {e}")
             return
+        except ValueError:
+             logging.error(f"Invalid user ID format: {user_id}")
+             return
         if not user:
-            logging.error(f"User {user_id} is None")
+            logging.error(f"User object for {user_id} is None after fetch attempt.")
             return
-        header = l10n.get('availability_header', lang, species=species)
-        message_entries = [header]
+        products_with_ratings = []
         for product in available:
             shop_id = str(product['shop_id'])
             rating = await get_shop_rating(shop_id)
+            products_with_ratings.append({"product_data": product, "rating": rating})
+        def sort_key(item):
+            rating = item["rating"]
+            shop_name = item["product_data"].get('shop_name', '').lower()
+            return (rating is None, -rating if rating is not None else 0, shop_name)
+        sorted_products_with_ratings = sorted(products_with_ratings, key=sort_key)
+        header = l10n.get('availability_header', lang, species=species)
+        message_entries = [header]
+        for item in sorted_products_with_ratings:
+            product = item["product_data"]
+            rating = item["rating"]
             rating_str = format_rating(rating)
-            shop_info = SHOP_DATA.get(shop_id)
-            if shop_info:
-                shop_url = shop_info.get('url', 'N/A')
+            shop_id = str(product['shop_id'])
+            if SHOP_DATA is None:
+                 logging.error("SHOP_DATA is None in trigger_availability_check! Attempting reload...")
+                 await reload_shops()
+                 SHOP_DATA = await load_shop_data()
+                 if SHOP_DATA is None:
+                      logging.error("Failed to reload SHOP_DATA!")
+                      shop_info = None
+                 else:
+                      shop_info = SHOP_DATA.get(shop_id)
             else:
-                shop_url = 'N/A'
+                 shop_info = SHOP_DATA.get(shop_id)
+            shop_url = shop_info.get('url', 'N/A') if shop_info else 'N/A'
             message_entries.append(l10n.get(
                 'availability_entry',
                 lang,
@@ -508,24 +531,33 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False):
                 SET status='completed', notified_at=CURRENT_TIMESTAMP
                 WHERE user_id=? AND species=?
             """, (user_id, species), commit=True)
+            logging.info(f"Successfully sent availability notification to user {user_id} for {species}.")
         except discord.Forbidden:
-            logging.warning(f"DM failed for user {user_id}")
+            logging.warning(f"DM failed for user {user_id} (discord.Forbidden). Triggering fallback.")
             await handle_dm_failure(user_id, species, regions, lang)
         except discord.HTTPException as e:
             if hasattr(e, "status") and e.status == 429:
-                logging.warning(f"Rate limit reached: {e}")
-                await asyncio.sleep(e.retry_after)
+                logging.warning(f"Rate limit reached sending DM to user {user_id}: {e}. Retrying after delay.")
+                await asyncio.sleep(e.retry_after if hasattr(e, 'retry_after') else 5)
             else:
-                raise
+                logging.error(f"HTTP error sending DM to user {user_id}: {e}", exc_info=True)
+                await execute_db("""
+                    UPDATE notifications SET status='failed' WHERE user_id=? AND species=?
+                """, (user_id, species), commit=True)
         except Exception as e:
-            logging.error(f"Error when sending the message: {e}")
+            logging.error(f"Error during message sending or DB update for user {user_id}, species {species}: {e}", exc_info=True)
+            await execute_db("""
+                UPDATE notifications SET status='failed' WHERE user_id=? AND species=?
+            """, (user_id, species), commit=True)
     except Exception as e:
-        logging.error(f"Critical error: {e}", exc_info=True)
-        await execute_db("""
-            UPDATE notifications
-            SET status='failed'
-            WHERE user_id=? AND species=?
-        """, (user_id, species), commit=True)
+        logging.error(f"Critical error in trigger_availability_check for user {user_id}, species {species}: {e}", exc_info=True)
+        if 'user_id' in locals() and 'species' in locals():
+            try:
+                await execute_db("""
+                    UPDATE notifications SET status='failed' WHERE user_id=? AND species=?
+                """, (user_id, species), commit=True)
+            except Exception as db_err:
+                logging.error(f"Failed to even set status to 'failed' after critical error: {db_err}")
 async def handle_dm_failure(user_id, species, regions, lang):
     try:
         servers = await execute_db("""
