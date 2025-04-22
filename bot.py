@@ -1257,7 +1257,7 @@ async def export_data(ctx):
         if owned_servers:
             server_file = await create_temp_file(owned_servers, f"servers_{user_id}.json")
             files.append(server_file)
-            logging.info(f"Server export for {user_id} with {len(owned_servers)} servers")
+            logging.debug(f"Server export for {user_id} with {len(owned_servers)} servers")
         await ctx.author.send(
             l10n.get('data_export_success', lang),
             files=files
@@ -1353,10 +1353,10 @@ async def optimize_db():
     try:
         await execute_db("VACUUM;", commit=True)
         await execute_db("PRAGMA optimize;", commit=True)
-        logging.info("VACUUM and OPTIMIZE completed successfully.")
+        logging.debug("VACUUM and OPTIMIZE completed successfully.")
     except Exception as e:
         logging.error(f"VACUUM/OPTIMIZE error: {e}")
-@tasks.loop(hours=48)
+@tasks.loop(hours=2)
 async def sync_ratings():
     try:
         await ensure_shop_data()
