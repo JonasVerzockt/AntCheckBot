@@ -87,19 +87,19 @@ async def execute_db(query, params=(), commit=False, fetch=False):
         conn.row_factory = sqlite3.Row
         try:
             cursor = conn.cursor()
-            logging.info(f"Executing query: {query}, with params: {params}")
+            logging.debug(f"Executing query: {query}, with params: {params}")
             cursor.execute(query, params)
             if commit:
                 conn.commit()
-                logging.info("Transaction committed")
+                logging.debug("Transaction committed")
             if fetch:
                 return cursor.fetchall()
-                logging.info(f"Fetch result: {result}")
+                logging.debug(f"Fetch result: {result}")
             return cursor.rowcount
-            logging.info(f"Rowcount: {result}")
+            logging.debug(f"Rowcount: {result}")
         finally:
             conn.close()
-            logging.info("Connection closed")
+            logging.debug("Connection closed")
     return await bot.loop.run_in_executor(db_executor, sync_task)
 # Spracheinstellungen
 class Localization:
@@ -144,7 +144,7 @@ async def get_setting(server_id, channel_id):
         return None
 def allowed_channel():
     async def predicate(ctx):
-        logging.info(f"Context in allowed_channel: {ctx}")
+        logging.debug(f"Context in allowed_channel: {ctx}")
         if ctx.guild is None:
             return True
         channel_id = await get_setting(ctx.guild.id, ctx.channel.id)
@@ -340,7 +340,7 @@ def expand_regions(regions):
     global EU_COUNTRY_CODES
     if EU_COUNTRY_CODES is None:
          logging.error("EU_COUNTRY_CODES not loaded before expand_regions call!")
-         return regions # Oder Fehler auslösen
+         return regions
 
     regions = [r.strip().lower() for r in regions]
     if "eu" in regions:
@@ -356,7 +356,7 @@ async def load_eu_countries_if_needed():
         if not EU_COUNTRY_CODES or asyncio.iscoroutine(EU_COUNTRY_CODES):
             EU_COUNTRY_CODES = await load_eu_countries()
             EU_COUNTRY_CODES = list(EU_COUNTRY_CODES)
-            logging.info(f"EU_COUNTRY_CODES after loading: {type(EU_COUNTRY_CODES)} value: {EU_COUNTRY_CODES}")
+            logging.debug(f"EU_COUNTRY_CODES after loading: {type(EU_COUNTRY_CODES)} value: {EU_COUNTRY_CODES}")
 def split_availability_messages(entries, max_length=2000):
     chunks = []
     current_chunk = []
@@ -433,7 +433,7 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False):
                 with open("shops_ch_delivery.json", "r", encoding="utf-8") as f:
                     ch_data = json.load(f)
                     ch_shops = [str(entry["shop_id"]) for entry in ch_data]
-                    logging.info(f"CH delivery list with {len(ch_shops)} stores loaded")
+                    logging.debug(f"CH delivery list with {len(ch_shops)} stores loaded")
                 regions_list = ["ch"]
             except FileNotFoundError:
                 logging.error("CH delivery file not found")
@@ -461,12 +461,12 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False):
             logging.error(f"Error during availability check: {e}", exc_info=True)
             return
         if not available:
-            logging.info(f"No available products for {species} in {regions}")
+            logging.debug(f"No available products for {species} in {regions}")
             return
         user = None
         try:
             user = await bot.fetch_user(int(user_id))
-            logging.info(f"User type: {type(user)}")
+            logging.debug(f"User type: {type(user)}")
         except discord.NotFound:
             logging.error(f"User {user_id} not found.")
             return
@@ -507,8 +507,7 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False):
                 UPDATE notifications
                 SET status='completed', notified_at=CURRENT_TIMESTAMP
                 WHERE user_id=? AND species=?
-            """, (user_id, species))
-            conn.commit()
+            """, (user_id, species), commit=True)
         except discord.Forbidden:
             logging.warning(f"DM failed for user {user_id}")
             await handle_dm_failure(user_id, species, regions, lang)
@@ -526,8 +525,7 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False):
             UPDATE notifications
             SET status='failed'
             WHERE user_id=? AND species=?
-        """, (user_id, species))
-        conn.commit()
+        """, (user_id, species), commit=True)
 async def handle_dm_failure(user_id, species, regions, lang):
     try:
         servers = await execute_db("""
@@ -799,9 +797,9 @@ async def notification(
     swiss_only: discord.Option(bool, "Only CH-delivering stores", default=False),
     force: discord.Option(bool, "Force notification even if already set", default=False)
 ):
-    logging.info(f"Context type: {type(ctx)}")
-    logging.info(f"Author type: {type(ctx.author)}")
-    logging.info(f"Context before author access: {ctx}")  # Add this line
+    logging.debug(f"Context type: {type(ctx)}")
+    logging.debug(f"Author type: {type(ctx.author)}")
+    logging.debug(f"Context before author access: {ctx}")
     global SHOP_DATA
     SHOP_DATA = await load_shop_data()
     server_id = ctx.guild.id if ctx.guild else None
@@ -1322,7 +1320,7 @@ async def clean_old_notifications():
             notif_id, user_id, species, regions = row["id"], row["user_id"], row["species"], row["regions"]
             lang = await get_user_lang(user_id, None)
             await notify_expired(user_id, species, regions, lang)
-        logging.info(f"Old notifications cleaned up and users notified")
+        logging.debug(f"Old notifications cleaned up and users notified")
     except Exception as e:
         logging.error(f"Error during cleanup: {e}")
 @tasks.loop(hours=2)
