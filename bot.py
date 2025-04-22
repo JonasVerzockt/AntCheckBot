@@ -1383,6 +1383,7 @@ async def update_server_infos():
     await remove_left_servers(bot)
 @tasks.loop(hours=2)
 async def sync_ratings():
+    global SHOP_DATA
     logging.info("Starting combined task: Reloading shops and syncing ratings...")
     try:
         await reload_shops()
@@ -1431,10 +1432,8 @@ async def sync_ratings():
                 except Exception as db_err:
                      logging.error(f"Database error updating rating for shop {shop_id}: {db_err}")
         logging.info(f"Rating sync finished. Updated ratings for {updates_made} shops.")
-        global SHOP_DATA
         SHOP_DATA = await load_shop_data()
         logging.info("SHOP_DATA cache reloaded successfully after combined task.")
-
     except Exception as e:
         logging.error(f"Error during combined shop reload and rating sync task: {e}", exc_info=True)
 @tasks.loop(minutes=5)
