@@ -779,39 +779,84 @@ async def blacklist_list(ctx):
 @allowed_channel()
 async def shop_list(
     ctx,
-    country: discord.Option(str, "Filter shops by region code...", required=False) = None
-):
+    country: discord.Option(str, "Filter shops by region code (e.g., de, at) or 'ch' for Swiss delivery", required=False) = None):
     lang = await get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
     await ensure_shop_data()
-    filtered_shop_data = SHOP_DATA
-    if country and country.lower() == "ch":
-        try:
-            ch_data = await load_ch_delivery_data()
-            ch_shops = {entry["shop_id"] for entry in ch_data}
-            filtered_shop_data = {k: v for k, v in SHOP_DATA.items() if k in ch_shops}
-        except Exception as e:
-            logging.error(f"CH filter error: {e}")
-    def sort_key(s):
-        try:
-            avg = s['average_rating']
-            return (avg is None, -(avg if avg is not None else 0), s['name'].lower())
-        except KeyError:
-            return (True, 0, s['name'].lower())
-    filtered_shops = []
-    for shop in filtered_shop_data.values():
-        if country:
-            if shop.get("country", "").lower() == country.lower():
-                filtered_shops.append(shop)
+    global SHOP_DATA
+    pre_filtered_shops = []
+    if country:
+        country_lower = country.lower()
+        if country_lower == "ch":
+            try:
+                ch_data = await load_ch_delivery_data()
+                manual_ch_shop_ids = {str(entry["shop_id"]) for entry in ch_data}
+                logging.debug(f"CH Filter: Found {len(manual_ch_shop_ids)} shops in ch_delivery.json")
+                auto_ch_shop_ids = {
+                    str(shop_id) for shop_id, shop_data in SHOP_DATA.items()
+                    if shop_data.get("country", "").lower() == "ch"
+                }
+                logging.debug(f"CH Filter: Found {len(auto_ch_shop_ids)} shops with country 'ch' in SHOP_DATA")
+                combined_ch_shop_ids = manual_ch_shop_ids.union(auto_ch_shop_ids)
+                logging.debug(f"CH Filter: Total unique CH shops to list: {len(combined_ch_shop_ids)}")
+                pre_filtered_shops = [v for k, v in SHOP_DATA.items() if str(k) in combined_ch_shop_ids]
+                logging.debug(f"CH Filter: Final filtered list size: {len(pre_filtered_shops)}")
+            except Exception as e:
+                logging.error(f"Error during CH filter processing in shop_list: {e}")
+                await ctx.respond(l10n.get('general_error', lang), ephemeral=True)
+                return
         else:
-            filtered_shops.append(shop)
-    if not filtered_shops:
+            pre_filtered_shops = [
+                s for s in SHOP_DATA.values()
+                if s.get("country", "").lower() == country_lower
+            ]
+            logging.debug(f"Country Filter '{country_lower}': Found {len(pre_filtered_shops)} shops")
+    else:
+        pre_filtered_shops = list(SHOP_DATA.values())
+        logging.debug(f"No Filter: Using all {len(pre_filtered_shops)} shops")
+    if not pre_filtered_shops:
         await ctx.respond(l10n.get('no_shops_found', lang), ephemeral=True)
         return
-    shops_sorted = sorted(filtered_shops, key=sort_key)
-    shop_entries = [
-        f"`{s['id']}` | {s['name']} - {format_rating(s.get('average_rating'))}"
-        for s in shops_sorted
-    ]
+    shops_with_live_ratings = []
+    for shop_dict in pre_filtered_shops:
+        shop_id = str(shop_dict.get('id'))
+        if not shop_id:
+            logging.warning(f"Shop dictionary missing 'id': {shop_dict.get('name', 'N/A')}")
+            continue
+        try:
+            live_rating = await get_shop_rating(shop_id)
+            shops_with_live_ratings.append({
+                **shop_dict,
+                'live_rating': live_rating
+            })
+        except Exception as e:
+            logging.error(f"Error fetching rating for shop {shop_id} in shop_list: {e}")
+            shops_with_live_ratings.append({**shop_dict, 'live_rating': None})
+    def sort_key_with_live_rating(shop_info):
+        rating = shop_info.get('live_rating')
+        shop_name = shop_info.get('name', '').lower()
+        rating_value = None
+        try:
+            if rating is not None:
+                rating_value = float(rating)
+        except (ValueError, TypeError):
+            rating_value = None
+
+        return (
+            rating_value is None,
+            -rating_value if rating_value is not None else 0,
+            shop_name
+        )
+    shops_sorted = sorted(shops_with_live_ratings, key=sort_key_with_live_rating)
+    shop_entries = []
+    for s in shops_sorted:
+        shop_id = s.get('id', 'N/A')
+        shop_name = s.get('name', 'Unknown Name')
+        rating_str = format_rating(s.get('live_rating'))
+        shop_entry = f"`{shop_id}` | {shop_name} - {rating_str}"
+        shop_entries.append(shop_entry)
+    if not shop_entries:
+         await ctx.respond(l10n.get('no_shops_found', lang), ephemeral=True)
+         return
     text = l10n.get('available_shops', lang, shops="\n- " + "\n- ".join(shop_entries))
     blocks = await split_message(text)
     try:
@@ -819,7 +864,14 @@ async def shop_list(
         for block in blocks[1:]:
             await ctx.followup.send(block, ephemeral=True)
     except IndexError:
-        await ctx.respond(l10n.get('no_shops_found', lang), ephemeral=True)
+        logging.error("split_message returned an empty list unexpectedly for shop_list.")
+        await ctx.respond(l10n.get('general_error', lang), ephemeral=True)
+    except discord.HTTPException as e:
+         logging.error(f"Error sending shop list response (HTTPException): {e}")
+         try:
+             await ctx.followup.send(l10n.get('general_error', lang), ephemeral=True)
+         except Exception:
+             logging.error("Failed to send error followup message.")
 @bot.slash_command(name="notification", description="Set up your notifications")
 @allowed_channel()
 async def notification(
