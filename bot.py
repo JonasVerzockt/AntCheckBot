@@ -41,7 +41,11 @@ from pathlib import Path
 from logging.handlers import RotatingFileHandler
 from thefuzz import process
 from concurrent.futures import ThreadPoolExecutor
+import asyncio
+import sys
+import traceback
 # Pfade und Konfiguration
+SHOP_DATA = None
 BASE_DIR = Path(__file__).parent
 LOCALES_DIR = BASE_DIR / "locales"
 TOKEN = "TOKEN"
@@ -50,7 +54,9 @@ SHOPS_DATA_FILE = "shops_data.json"
 SERVER_IDS = [ID1, ID2]
 BOT_OWNER = USERID
 EU_COUNTRIES_FILE = "eu_countries.json"
-db_executor = ThreadPoolExecutor(max_workers=15)
+EU_COUNTRY_CODES = None
+EU_COUNTRY_CODES_LOCK = asyncio.Lock()
+db_executor = ThreadPoolExecutor(max_workers=5)
 intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
@@ -72,11 +78,8 @@ def setup_logger():
 setup_logger()
 # EU Liste laden
 async def load_eu_countries():
-    def sync_load():
-        with open(EU_COUNTRIES_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            return [entry["code"].lower() for entry in data]
-    return await bot.loop.run_in_executor(None, sync_load)
+    rows = await execute_db("SELECT code FROM eu_countries", fetch=True)
+    return [row["code"].lower() for row in rows]
 # Datenbankverbindung
 async def execute_db(query, params=(), commit=False, fetch=False):
     def sync_task():
@@ -84,14 +87,19 @@ async def execute_db(query, params=(), commit=False, fetch=False):
         conn.row_factory = sqlite3.Row
         try:
             cursor = conn.cursor()
+            logging.info(f"Executing query: {query}, with params: {params}")
             cursor.execute(query, params)
             if commit:
                 conn.commit()
+                logging.info("Transaction committed")
             if fetch:
                 return cursor.fetchall()
+                logging.info(f"Fetch result: {result}")
             return cursor.rowcount
+            logging.info(f"Rowcount: {result}")
         finally:
             conn.close()
+            logging.info("Connection closed")
     return await bot.loop.run_in_executor(db_executor, sync_task)
 # Spracheinstellungen
 class Localization:
@@ -119,17 +127,33 @@ async def get_user_lang(user_id, server_id):
         return rows[0][0]
     return 'en'
 # Hilfefunktionen und Decorators
+async def ensure_shop_data():
+    global SHOP_DATA
+    if SHOP_DATA is None or asyncio.iscoroutine(SHOP_DATA):
+        SHOP_DATA = await load_shop_data()
 async def get_server_channel(server_id):
     rows = await execute_db("SELECT channel_id FROM server_settings WHERE server_id=?", (server_id,), fetch=True)
     return rows[0][0] if rows else None
+async def get_setting(server_id, channel_id):
+    query = "SELECT channel_id FROM server_settings WHERE server_id=? AND channel_id=?"
+    params = (server_id, channel_id)
+    result = await execute_db(query, params, fetch=True)
+    if result:
+        return result[0]['channel_id']
+    else:
+        return None
 def allowed_channel():
     async def predicate(ctx):
+        logging.info(f"Context in allowed_channel: {ctx}")
         if ctx.guild is None:
             return True
-        allowed_channel_id = await get_server_channel(ctx.guild.id)
-        if allowed_channel_id is None or ctx.channel.id == allowed_channel_id:
+        channel_id = await get_setting(ctx.guild.id, ctx.channel.id)
+        if channel_id is None:
             return True
-        return False
+        if ctx.channel.id == channel_id:
+            return True
+        lang = await get_user_lang(ctx.author.id, ctx.guild.id)
+        raise commands.CheckFailure(l10n.get('wrong_channel', lang))
     return commands.check(predicate)
 def admin_or_manage_messages():
     async def predicate(ctx):
@@ -312,21 +336,33 @@ def format_rating(rating):
         return f"⭐ {rating:.2f}"
     except (TypeError, ValueError):
         return "❌"
-async def expand_regions(regions):
+def expand_regions(regions):
     global EU_COUNTRY_CODES
-    if not EU_COUNTRY_CODES:
-        EU_COUNTRY_CODES = await load_eu_countries()
+    if EU_COUNTRY_CODES is None:
+         logging.error("EU_COUNTRY_CODES not loaded before expand_regions call!")
+         return regions # Oder Fehler auslösen
+
     regions = [r.strip().lower() for r in regions]
     if "eu" in regions:
         regions = [r for r in regions if r != "eu"]
-        regions = list(set(regions + EU_COUNTRY_CODES))
+        if isinstance(EU_COUNTRY_CODES, (list, set)):
+             regions = list(set(regions + list(EU_COUNTRY_CODES)))
+        else:
+             logging.error(f"EU_COUNTRY_CODES has unexpected type in expand_regions: {type(EU_COUNTRY_CODES)}")
     return regions
+async def load_eu_countries_if_needed():
+    global EU_COUNTRY_CODES
+    async with EU_COUNTRY_CODES_LOCK:
+        if not EU_COUNTRY_CODES or asyncio.iscoroutine(EU_COUNTRY_CODES):
+            EU_COUNTRY_CODES = await load_eu_countries()
+            EU_COUNTRY_CODES = list(EU_COUNTRY_CODES)
+            logging.info(f"EU_COUNTRY_CODES after loading: {type(EU_COUNTRY_CODES)} value: {EU_COUNTRY_CODES}")
 def split_availability_messages(entries, max_length=2000):
     chunks = []
     current_chunk = []
     current_length = 0
     for entry in entries:
-        entry_length = len(entry) + 2  # +2 für die Newlines
+        entry_length = len(entry) + 2
         if current_length + entry_length > max_length:
             chunks.append("\n\n".join(current_chunk))
             current_chunk = []
@@ -430,6 +466,7 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False):
         user = None
         try:
             user = await bot.fetch_user(int(user_id))
+            logging.info(f"User type: {type(user)}")
         except discord.NotFound:
             logging.error(f"User {user_id} not found.")
             return
@@ -445,6 +482,11 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False):
             shop_id = str(product['shop_id'])
             rating = await get_shop_rating(shop_id)
             rating_str = format_rating(rating)
+            shop_info = SHOP_DATA.get(shop_id)
+            if shop_info:
+                shop_url = shop_info.get('url', 'N/A')
+            else:
+                shop_url = 'N/A'
             message_entries.append(l10n.get(
                 'availability_entry',
                 lang,
@@ -454,7 +496,7 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False):
                 max_price=product['max_price'],
                 currency=product['currency_iso'],
                 product_url=product['antcheck_url'],
-                shop_url=product['shop_url'],
+                shop_url=shop_url,
                 rating=rating_str
             ))
         message_chunks = split_availability_messages(message_entries)
@@ -623,6 +665,7 @@ async def language(ctx, language: discord.Option(str, "Select the bot language (
 @user_settings.command(description="Add shop to blacklist")
 @allowed_channel()
 async def blacklist_add(ctx, shop: discord.Option(str, "Shop name or ID", required=True)):
+    await ensure_shop_data()
     user_id = str(ctx.author.id)
     lang = await get_user_lang(user_id, ctx.guild.id if ctx.guild else None)
     shop_names = {s_id: s_data["name"] for s_id, s_data in SHOP_DATA.items()}
@@ -653,6 +696,7 @@ async def blacklist_add(ctx, shop: discord.Option(str, "Shop name or ID", requir
 @user_settings.command(description="Remove shop from blacklist")
 @allowed_channel()
 async def blacklist_remove(ctx, shop: discord.Option(str, "Shop name or ID", required=True)):
+    await ensure_shop_data()
     user_id = str(ctx.author.id)
     lang = await get_user_lang(user_id, ctx.guild.id if ctx.guild else None)
     shop_names = {s_id: s_data["name"] for s_id, s_data in SHOP_DATA.items()}
@@ -685,6 +729,7 @@ async def blacklist_remove(ctx, shop: discord.Option(str, "Shop name or ID", req
 @user_settings.command(description="List blacklisted shops")
 @allowed_channel()
 async def blacklist_list(ctx):
+    await ensure_shop_data()
     user_id = str(ctx.author.id)
     lang = await get_user_lang(user_id, ctx.guild.id if ctx.guild else None)
     rows = await execute_db(
@@ -707,12 +752,13 @@ async def shop_list(
     country: discord.Option(str, "Filter shops by region code...", required=False) = None
 ):
     lang = await get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
-    SHOP_DATA = await load_shop_data()
+    await ensure_shop_data()
+    filtered_shop_data = SHOP_DATA
     if country and country.lower() == "ch":
         try:
             ch_data = await load_ch_delivery_data()
             ch_shops = {entry["shop_id"] for entry in ch_data}
-            SHOP_DATA = {k: v for k, v in SHOP_DATA.items() if k in ch_shops}
+            filtered_shop_data = {k: v for k, v in SHOP_DATA.items() if k in ch_shops}
         except Exception as e:
             logging.error(f"CH filter error: {e}")
     def sort_key(s):
@@ -722,7 +768,7 @@ async def shop_list(
         except KeyError:
             return (True, 0, s['name'].lower())
     filtered_shops = []
-    for shop in SHOP_DATA.values():
+    for shop in filtered_shop_data.values():
         if country:
             if shop.get("country", "").lower() == country.lower():
                 filtered_shops.append(shop)
@@ -753,6 +799,11 @@ async def notification(
     swiss_only: discord.Option(bool, "Only CH-delivering stores", default=False),
     force: discord.Option(bool, "Force notification even if already set", default=False)
 ):
+    logging.info(f"Context type: {type(ctx)}")
+    logging.info(f"Author type: {type(ctx.author)}")
+    logging.info(f"Context before author access: {ctx}")  # Add this line
+    global SHOP_DATA
+    SHOP_DATA = await load_shop_data()
     server_id = ctx.guild.id if ctx.guild else None
     lang = await get_user_lang(ctx.author.id, server_id)
     if swiss_only:
@@ -766,7 +817,7 @@ async def notification(
         valid_regions = ["ch"]
     else:
         regions_list = [r.strip().lower() for r in regions.split(",")] if regions else []
-        regions_list = await expand_regions(regions_list)
+        regions_list = expand_regions(regions_list)
         valid_regions = [r for r in regions_list if any(s["country"].lower() == r for s in SHOP_DATA.values())]
         if not valid_regions:
             available_regions = sorted({s["country"].lower() for s in SHOP_DATA.values()})
@@ -810,7 +861,7 @@ async def notification(
                         await execute_db("""
                             INSERT INTO notifications (user_id, species, regions, status)
                             VALUES (?, ?, ?, 'active')
-                        """, (str(ctx.author.id), species, ",".join(valid_regions)), commit=True)
+                        """, (str(ctx.author.id), species, ",".join(valid_regions)))
                         await ctx.respond(l10n.get('notification_set_forced', lang, species=species, regions=", ".join(valid_regions)))
                     except sqlite3.IntegrityError:
                         await ctx.respond(l10n.get('notification_exists_active', lang, species=species, regions=", ".join(valid_regions)), ephemeral=True)
@@ -1034,6 +1085,7 @@ async def shopmapping_add(
     external_name: discord.Option(str, "Name from Google Sheets"),
     shop_id: discord.Option(str, "Internal shop ID")
 ):
+    await ensure_shop_data()
     lang = await get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
     shop_id = str(shop_id)
     if shop_id not in SHOP_DATA:
@@ -1056,6 +1108,7 @@ async def shopmapping_add(
 @admin_or_manage_messages()
 @allowed_channel()
 async def shopmapping_show(ctx):
+    await ensure_shop_data()
     lang = await get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
     mappings = await execute_db("SELECT * FROM shop_name_mappings", fetch=True)
     if not mappings:
@@ -1143,6 +1196,7 @@ ch_delivery = bot.create_group(
 @ch_delivery.command(description="Add store to CH delivery list (only for AAM-Discord)")
 @allowed_channel()
 async def add(ctx, shop_id: discord.Option(str, "Shop-ID")):
+    await ensure_shop_data()
     user_id = str(ctx.author.id)
     lang = await get_user_lang(user_id, ctx.guild.id if ctx.guild else None)
     current_data = await load_ch_delivery_data()
@@ -1172,6 +1226,7 @@ async def add(ctx, shop_id: discord.Option(str, "Shop-ID")):
 @admin_or_manage_messages()
 @allowed_channel()
 async def remove(ctx, shop_id: discord.Option(str, "Shop-ID")):
+    await ensure_shop_data()
     lang = await get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
     current_data = await load_ch_delivery_data()
     initial_count = len(current_data)
@@ -1190,7 +1245,8 @@ async def remove(ctx, shop_id: discord.Option(str, "Shop-ID")):
     )
 @ch_delivery.command(description="Show list of all CH suppliers (only for AAM-Discord)")
 @allowed_channel()
-async def list(ctx):
+async def show(ctx):
+    await ensure_shop_data()
     lang = await get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
     current_data = await load_ch_delivery_data()
     if not current_data:
@@ -1221,6 +1277,7 @@ async def optimize_db():
 @tasks.loop(hours=48)
 async def sync_ratings():
     try:
+        await ensure_shop_data()
         raw_data = await load_shop_data_from_google_sheets()
         all_mappings = await execute_db("SELECT external_name, shop_id FROM shop_name_mappings", fetch=True)
         for row in raw_data:
@@ -1299,6 +1356,7 @@ async def update_bot_status():
 @bot.event
 async def on_ready():
     global EU_COUNTRY_CODES, SHOP_DATA
+    logging.info("Bot starting up...")
     EU_COUNTRY_CODES = await load_eu_countries()
     SHOP_DATA = await load_shop_data()
     def init_db():
@@ -1361,6 +1419,10 @@ async def on_ready():
                 banner_url TEXT,
                 description TEXT
             );
+            CREATE TABLE IF NOT EXISTS eu_countries (
+                code TEXT PRIMARY KEY,
+                name TEXT
+            );
             CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_active_notification
             ON notifications(user_id, species, regions) WHERE status='active';
             CREATE INDEX IF NOT EXISTS idx_notifications_status ON notifications(status);
@@ -1368,27 +1430,53 @@ async def on_ready():
         """)
         init_conn.commit()
         init_conn.close()
-    await bot.loop.run_in_executor(None, init_db)
+        logging.info("Database schema initialized/verified.")
+
+    try:
+        await bot.loop.run_in_executor(None, init_db)
+        logging.info("Database initialization task completed.")
+    except Exception as e:
+        logging.error(f"FATAL: Database initialization failed: {e}", exc_info=True)
+    try:
+        EU_COUNTRY_CODES = await load_eu_countries()
+        if isinstance(EU_COUNTRY_CODES, (list, set)):
+             EU_COUNTRY_CODES = list(EU_COUNTRY_CODES)
+             logging.info(f"EU Countries loaded: {len(EU_COUNTRY_CODES)} codes found.")
+        else:
+             logging.error(f"load_eu_countries returned unexpected type: {type(EU_COUNTRY_CODES)}. Setting to empty list.")
+             EU_COUNTRY_CODES = []
+    except Exception as e:
+        logging.error(f"FATAL: Failed to load EU countries during startup: {e}", exc_info=True)
+        EU_COUNTRY_CODES = []
+    try:
+        SHOP_DATA = await load_shop_data()
+        logging.info(f"Shop data loaded: {len(SHOP_DATA)} shops found.")
+    except Exception as e:
+        logging.error(f"FATAL: Failed to load shop data during startup: {e}", exc_info=True)
+        SHOP_DATA = {}
     bot.start_time = datetime.now()
     logging.info(f"Bot online: {bot.user.name}")
-    await bot.sync_commands()
-    clean_old_notifications.start()
-    check_availability.start()
-    update_bot_status.start()
-    psutil.cpu_percent(interval=None)
-    optimize_db.start()
-    reload_shops_task.start()
-    sync_ratings.start()
-    update_server_infos.start()
+    try:
+        await bot.sync_commands()
+        logging.info("Commands synced successfully.")
+    except Exception as e:
+        logging.error(f"Failed to sync commands: {e}", exc_info=True)
+    logging.info("Starting background tasks...")
+    try:
+        if 'clean_old_notifications' in globals() and isinstance(clean_old_notifications, tasks.Loop): clean_old_notifications.start()
+        if 'check_availability' in globals() and isinstance(check_availability, tasks.Loop): check_availability.start()
+        if 'update_bot_status' in globals() and isinstance(update_bot_status, tasks.Loop): update_bot_status.start()
+        if 'optimize_db' in globals() and isinstance(optimize_db, tasks.Loop): optimize_db.start()
+        if 'reload_shops_task' in globals() and isinstance(reload_shops_task, tasks.Loop): reload_shops_task.start()
+        if 'sync_ratings' in globals() and isinstance(sync_ratings, tasks.Loop): sync_ratings.start()
+        if 'update_server_infos' in globals() and isinstance(update_server_infos, tasks.Loop): update_server_infos.start()
+        psutil.cpu_percent(interval=None)
+        logging.info("Background tasks initiated.")
+    except NameError as e:
+         logging.error(f"Failed to start a background task - NameError: {e}. Make sure all task loops are defined before on_ready.")
+    except Exception as e:
+         logging.error(f"An error occurred starting background tasks: {e}", exc_info=True)
     logging.info(f"Bot final loaded")
-@bot.event
-async def on_application_command_error(ctx, error):
-    if isinstance(error, discord.errors.CheckFailure):
-        if not ctx.response.is_done():
-            lang = await get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
-            await ctx.respond(l10n.get('no_permission', lang), ephemeral=True)
-    else:
-        logging.error(f"Command error: {error}", exc_info=True)
 if __name__ == "__main__":
     LOCALES_DIR.mkdir(exist_ok=True)
     bot.run(TOKEN)
