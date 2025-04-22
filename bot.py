@@ -700,7 +700,7 @@ async def blacklist_add(ctx, shop: discord.Option(str, "Shop name or ID", requir
     lang = await get_user_lang(user_id, ctx.guild.id if ctx.guild else None)
     shop_names = {s_id: s_data["name"] for s_id, s_data in SHOP_DATA.items()}
     matches = process.extract(shop, shop_names.values(), limit=3)
-    best_match = next((match for match in matches if match[1] > 80), None)
+    best_match = next((match for match in matches if match[1] > 75), None)
     if not best_match:
         suggestions = "\n".join([f"- {m[0]}" for m in matches])
         await ctx.respond(
@@ -731,7 +731,7 @@ async def blacklist_remove(ctx, shop: discord.Option(str, "Shop name or ID", req
     lang = await get_user_lang(user_id, ctx.guild.id if ctx.guild else None)
     shop_names = {s_id: s_data["name"] for s_id, s_data in SHOP_DATA.items()}
     matches = process.extract(shop, shop_names.values(), limit=3)
-    best_match = next((match for match in matches if match[1] > 80), None)
+    best_match = next((match for match in matches if match[1] > 75), None)
     if not best_match:
         suggestions = "\n".join([f"- {m[0]}" for m in matches])
         await ctx.respond(
@@ -1384,10 +1384,10 @@ async def update_server_infos():
 @tasks.loop(hours=2)
 async def sync_ratings():
     global SHOP_DATA
-    logging.info("Starting combined task: Reloading shops and syncing ratings...")
+    logging.debug("Starting combined task: Reloading shops and syncing ratings...")
     try:
         await reload_shops()
-        logging.info("Shop base data reloaded successfully from JSON.")
+        logging.debug("Shop base data reloaded successfully from JSON.")
         await ensure_shop_data()
         raw_data = await load_shop_data_from_google_sheets()
         if not raw_data:
@@ -1409,14 +1409,14 @@ async def sync_ratings():
                     shop_name,
                     shop_names_for_fuzzy.keys(),
                     scorer=process.fuzz.token_sort_ratio,
-                    score_cutoff=80
+                    score_cutoff=75
                 )
                 if match:
                     matched_name, score = match
                     shop_id = shop_names_for_fuzzy[matched_name]
-                    logging.info(f"Fuzzy matched '{shop_name}' to '{matched_name}' (ID: {shop_id}) with score {score}")
+                    logging.debug(f"Fuzzy matched '{shop_name}' to '{matched_name}' (ID: {shop_id}) with score {score}")
                 else:
-                    logging.warning(f"Could not map or fuzzy match shop name: '{shop_name}' from Google Sheets.")
+                    logging.debug(f"Could not map or fuzzy match shop name: '{shop_name}' from Google Sheets.")
                     continue
             if shop_id:
                 try:
@@ -1431,9 +1431,9 @@ async def sync_ratings():
                      logging.warning(f"Invalid rating format for shop '{shop_name}' (ID: {shop_id}): '{rating_str}'. Skipping update. Error: {ve}")
                 except Exception as db_err:
                      logging.error(f"Database error updating rating for shop {shop_id}: {db_err}")
-        logging.info(f"Rating sync finished. Updated ratings for {updates_made} shops.")
+        logging.debug(f"Rating sync finished. Updated ratings for {updates_made} shops.")
         SHOP_DATA = await load_shop_data()
-        logging.info("SHOP_DATA cache reloaded successfully after combined task.")
+        logging.debug("SHOP_DATA cache reloaded successfully after combined task.")
     except Exception as e:
         logging.error(f"Error during combined shop reload and rating sync task: {e}", exc_info=True)
 @tasks.loop(minutes=5)
