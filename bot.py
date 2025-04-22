@@ -500,7 +500,7 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False):
             shop_id = str(product['shop_id'])
             if SHOP_DATA is None:
                  logging.error("SHOP_DATA is None in trigger_availability_check! Attempting reload...")
-                 await reload_shops()
+                 await sync_ratings()
                  SHOP_DATA = await load_shop_data()
                  if SHOP_DATA is None:
                       logging.error("Failed to reload SHOP_DATA!")
@@ -1150,7 +1150,7 @@ async def testnotification(ctx):
 @admin_or_manage_messages()
 @allowed_channel()
 async def reloadshops(ctx):
-    await reload_shops()
+    await sync_ratings()
     global SHOP_DATA
     SHOP_DATA = await load_shop_data()
     await ctx.respond("Store data has been reloaded.", ephemeral=True)
@@ -1356,37 +1356,6 @@ async def optimize_db():
         logging.debug("VACUUM and OPTIMIZE completed successfully.")
     except Exception as e:
         logging.error(f"VACUUM/OPTIMIZE error: {e}")
-@tasks.loop(hours=2)
-async def sync_ratings():
-    try:
-        await ensure_shop_data()
-        raw_data = await load_shop_data_from_google_sheets()
-        all_mappings = await execute_db("SELECT external_name, shop_id FROM shop_name_mappings", fetch=True)
-        for row in raw_data:
-            shop_name, _, rating = row
-            shop_id = None
-            for ext_name, mapped_id in all_mappings:
-                if ext_name.casefold() == shop_name.casefold():
-                    shop_id = mapped_id
-                    break
-            if not shop_id:
-                matches = process.extractOne(
-                    shop_name,
-                    [s["name"] for s in SHOP_DATA.values()],
-                    scorer=process.fuzz.token_sort_ratio
-                )
-                if matches and matches[1] > 75:
-                    shop_id = next(k for k,v in SHOP_DATA.items() if v["name"] == matches[0])
-                else:
-                    continue
-            await execute_db("""
-                UPDATE shops
-                SET average_rating = ?
-                WHERE id = ?
-            """, (float(rating.replace(',', '.')), shop_id), commit=True)
-        await load_shop_data()
-    except Exception as e:
-        logging.error(f"Rating sync failed: {e}")
 @tasks.loop(hours=24)
 async def clean_old_notifications():
     try:
@@ -1407,16 +1376,67 @@ async def clean_old_notifications():
         logging.debug(f"Old notifications cleaned up and users notified")
     except Exception as e:
         logging.error(f"Error during cleanup: {e}")
-@tasks.loop(hours=2)
+@tasks.loop(hours=6)
 async def update_server_infos():
     for guild in bot.guilds:
         await update_server_info(guild)
     await remove_left_servers(bot)
-@tasks.loop(hours=1)
-async def reload_shops_task():
-    await reload_shops()
-    global SHOP_DATA
-    SHOP_DATA = await load_shop_data()
+@tasks.loop(hours=2)
+async def sync_ratings():
+    logging.info("Starting combined task: Reloading shops and syncing ratings...")
+    try:
+        await reload_shops()
+        logging.info("Shop base data reloaded successfully from JSON.")
+        await ensure_shop_data()
+        raw_data = await load_shop_data_from_google_sheets()
+        if not raw_data:
+             logging.warning("No data received from Google Sheets for rating sync.")
+        all_mappings = await execute_db("SELECT external_name, shop_id FROM shop_name_mappings", fetch=True)
+        mapping_dict = {row["external_name"].casefold(): row["shop_id"] for row in all_mappings}
+        temp_shop_data_for_matching = SHOP_DATA if SHOP_DATA else await load_shop_data()
+        shop_names_for_fuzzy = {s["name"]: k for k, s in temp_shop_data_for_matching.items()}
+        updates_made = 0
+        for row in raw_data:
+            if len(row) < 3:
+                logging.warning(f"Skipping incomplete row from Google Sheets: {row}")
+                continue
+            shop_name, _, rating_str = row
+            shop_id = None
+            shop_id = mapping_dict.get(shop_name.casefold())
+            if not shop_id:
+                match = process.extractOne(
+                    shop_name,
+                    shop_names_for_fuzzy.keys(),
+                    scorer=process.fuzz.token_sort_ratio,
+                    score_cutoff=80
+                )
+                if match:
+                    matched_name, score = match
+                    shop_id = shop_names_for_fuzzy[matched_name]
+                    logging.info(f"Fuzzy matched '{shop_name}' to '{matched_name}' (ID: {shop_id}) with score {score}")
+                else:
+                    logging.warning(f"Could not map or fuzzy match shop name: '{shop_name}' from Google Sheets.")
+                    continue
+            if shop_id:
+                try:
+                    rating_float = float(rating_str.replace(',', '.'))
+                    await execute_db("""
+                        UPDATE shops
+                        SET average_rating = ?
+                        WHERE id = ?
+                    """, (rating_float, shop_id), commit=True)
+                    updates_made += 1
+                except (ValueError, TypeError) as ve:
+                     logging.warning(f"Invalid rating format for shop '{shop_name}' (ID: {shop_id}): '{rating_str}'. Skipping update. Error: {ve}")
+                except Exception as db_err:
+                     logging.error(f"Database error updating rating for shop {shop_id}: {db_err}")
+        logging.info(f"Rating sync finished. Updated ratings for {updates_made} shops.")
+        global SHOP_DATA
+        SHOP_DATA = await load_shop_data()
+        logging.info("SHOP_DATA cache reloaded successfully after combined task.")
+
+    except Exception as e:
+        logging.error(f"Error during combined shop reload and rating sync task: {e}", exc_info=True)
 @tasks.loop(minutes=5)
 async def check_availability():
     rows = await execute_db("SELECT user_id, species, regions FROM notifications WHERE status='active'", fetch=True)
@@ -1549,7 +1569,6 @@ async def on_ready():
         if 'check_availability' in globals() and isinstance(check_availability, tasks.Loop): check_availability.start()
         if 'update_bot_status' in globals() and isinstance(update_bot_status, tasks.Loop): update_bot_status.start()
         if 'optimize_db' in globals() and isinstance(optimize_db, tasks.Loop): optimize_db.start()
-        if 'reload_shops_task' in globals() and isinstance(reload_shops_task, tasks.Loop): reload_shops_task.start()
         if 'sync_ratings' in globals() and isinstance(sync_ratings, tasks.Loop): sync_ratings.start()
         if 'update_server_infos' in globals() and isinstance(update_server_infos, tasks.Loop): update_server_infos.start()
         psutil.cpu_percent(interval=None)
