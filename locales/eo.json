@@ -99,5 +99,9 @@
     "notification_error_neither_genus_species": "❌ Bonvolu doni aŭ specion (species) aŭ genron (genus).",
     "notification_error_no_region": "❌ Bonvolu specifi almenaŭ unu regionon (ekz., de, at, eu). Disponeblaj regionoj kun vendejoj: {regions}",
     "species_or_genus_not_found": "❌ La specio aŭ genro '{term}' ne troveblis en la produktaj datumoj.",
+    "notification_set_with_exclude": "🔔 Sciigo starigita por genro `{species}` en regionoj `{regions}`, ekskludante speciojn: `{excluded}`.",
+    "notification_set_forced_with_exclude": "⚠️ Sciigo starigita por genro `{species}` (Forta reĝimo) en regionoj `{regions}`, ekskludante speciojn: `{excluded}`.",
+    "notification_exists_active_with_exclude": "❌ Vi jam havas aktivan sciigon por genro `{species}` en regionoj `{regions}`, ekskludante speciojn: `{excluded}`.",
+    "notification_reactivated_with_exclude": "🔄 La sciigo por genro `{species}` en regionoj `{regions}` estis reaktivigita, ekskludante speciojn: `{excluded}`.",
     "general_error": "❌ Okazis eraro"
 }

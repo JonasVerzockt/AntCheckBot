@@ -186,23 +186,25 @@ async def species_exists(species):
                     continue
         return False
     return await bot.loop.run_in_executor(None, sync_task)
-async def check_availability_for_species(species, regions, user_id=None, ch_mode=False, ch_shops=None):
+async def check_availability_for_species(species_or_genus, regions, user_id=None, ch_mode=False, ch_shops=None, excluded_species_list=None):
     logger = logging.getLogger("availability")
-    logger.info(f"Start availability check for species: '{species}', regions: {regions}, User: {user_id}, CH-Mode: {ch_mode}")
+    logger.info(f"Start availability check for: '{species_or_genus}', regions: {regions}, User: {user_id}, CH-Mode: {ch_mode}, Exclude: {excluded_species_list}")
     if user_id is not None:
         blacklisted_shops = await get_blacklisted_shops(user_id)
     else:
         blacklisted_shops = set()
     SHOP_DATA = await load_shop_data()
-    def sync_task(blacklisted_shops, SHOP_DATA, ch_shops):
+    if excluded_species_list is None:
+        excluded_species_list = set()
+    def sync_task(blacklisted_shops, SHOP_DATA, ch_shops, excluded_species_list):
         if ch_mode:
             if not ch_shops:
                 try:
                     with open("shops_ch_delivery.json", "r", encoding="utf-8") as f:
-                        ch_json_shops = {entry["shop_id"] for entry in json.load(f)}
+                        ch_json_shops = {str(entry["shop_id"]) for entry in json.load(f)}
                         logger.info(f"CH delivery list loaded with {len(ch_json_shops)} manual entries")
                     auto_ch_shops = {
-                        shop_id for shop_id, shop_data in SHOP_DATA.items()
+                        str(shop_id) for shop_id, shop_data in SHOP_DATA.items()
                         if shop_data.get("country", "").lower() == "ch"
                     }
                     logger.info(f"Found {len(auto_ch_shops)} auto-detected CH stores")
@@ -214,7 +216,8 @@ async def check_availability_for_species(species, regions, user_id=None, ch_mode
             else:
                 logger.info(f"Using pre-loaded CH shops: {len(ch_shops)}")
         available_products = []
-        species_cf = species.strip().casefold()
+        search_term_cf = species_or_genus.strip().casefold()
+        is_genus_search = " " not in species_or_genus.strip()
         for filename in os.listdir(DATA_DIRECTORY):
             if filename.startswith("products_shop_") and filename.endswith(".json"):
                 file_path = os.path.join(DATA_DIRECTORY, filename)
@@ -222,10 +225,11 @@ async def check_availability_for_species(species, regions, user_id=None, ch_mode
                     shop_id_from_filename = int(filename.split("_")[2].split(".")[0])
                 except Exception:
                     continue
-                if ch_mode and str(shop_id_from_filename) not in (ch_shops or set()):
-                    logger.debug(f"Shop {shop_id_from_filename} not in CH list - skipped")
+                shop_id_str = str(shop_id_from_filename)
+                if ch_mode and shop_id_str not in (ch_shops or set()):
+                    logger.debug(f"Shop {shop_id_str} not in CH list - skipped")
                     continue
-                shop_data = SHOP_DATA.get(str(shop_id_from_filename))
+                shop_data = SHOP_DATA.get(shop_id_str)
                 if not shop_data:
                     continue
                 if not ch_mode:
@@ -242,11 +246,28 @@ async def check_availability_for_species(species, regions, user_id=None, ch_mode
                     title = product.get("title", "").strip()
                     title_cf = title.casefold()
                     in_stock = product.get("in_stock", False)
-                    product_shop_id = product.get("shop_id")
+                    product_shop_id = str(product.get("shop_id"))
 
-                    if (not title_cf.startswith(species_cf) or
-                        not in_stock or
-                        product_shop_id in blacklisted_shops):
+                    if product_shop_id in blacklisted_shops:
+                        continue
+                    if not in_stock:
+                        continue
+                    match = False
+                    if is_genus_search:
+                        if title_cf.startswith(search_term_cf):
+                            title_parts = title.split()
+                            if len(title_parts) > 1:
+                                product_species_name = title_parts[1].lower()
+                                if product_species_name not in excluded_species_list:
+                                    match = True
+                                else:
+                                     logger.debug(f"Excluding '{title}' because species '{product_species_name}' is in excluded list: {excluded_species_list}")
+                            else:
+                                match = True
+                    else:
+                        if title_cf.startswith(search_term_cf):
+                            match = True
+                    if not match:
                         continue
                     available_products.append({
                         "species": title,
@@ -256,13 +277,12 @@ async def check_availability_for_species(species, regions, user_id=None, ch_mode
                         "currency_iso": product["currency_iso"],
                         "antcheck_url": product["antcheck_url"],
                         "shop_url": shop_data["url"],
-                        "shop_id": shop_id_from_filename
+                        "shop_id": shop_id_str
                     })
-        logger.info(f"Availability check completed. Found: {len(available_products)}")
+        logger.info(f"Availability check completed for '{species_or_genus}'. Found: {len(available_products)}")
         return available_products
     return await bot.loop.run_in_executor(
-        None, lambda: sync_task(blacklisted_shops, SHOP_DATA, ch_shops)
-    )
+        None, lambda: sync_task(blacklisted_shops, SHOP_DATA, ch_shops, excluded_species_list))
 async def load_shop_data_from_google_sheets():
     def sync_task():
         import os
@@ -431,8 +451,10 @@ async def remove_left_servers(bot):
     left_guild_ids = db_guild_ids - current_guild_ids
     for guild_id in left_guild_ids:
         await execute_db("DELETE FROM server_info WHERE server_id = ?", (guild_id,), commit=True)
-async def trigger_availability_check(user_id, species, regions, ch_mode=False):
+async def trigger_availability_check(user_id, species, regions, ch_mode=False, excluded_species_list=None):
     global SHOP_DATA
+    if excluded_species_list is None:
+        excluded_species_list = set()
     try:
         server_id = None
         lang = await get_user_lang(user_id, server_id)
@@ -462,7 +484,8 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False):
                 regions_list,
                 user_id=str(user_id),
                 ch_mode=ch_mode,
-                ch_shops=ch_shops
+                ch_shops=ch_shops,
+                excluded_species_list=excluded_species_list
             )
         except FileNotFoundError as e:
             logging.error(f"Missing product file during availability check: {e.filename}")
@@ -471,7 +494,7 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False):
             logging.error(f"Error during availability check function call: {e}", exc_info=True)
             return
         if not available:
-            logging.debug(f"No available products found for {species} in {regions}")
+            logging.debug(f"No available products found for {species} in {regions} (excluding: {excluded_species_list})")
             return
         user = None
         try:
@@ -537,9 +560,9 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False):
             await execute_db("""
                 UPDATE notifications
                 SET status='completed', notified_at=CURRENT_TIMESTAMP
-                WHERE user_id=? AND species=?
-            """, (user_id, species), commit=True)
-            logging.info(f"Successfully sent availability notification to user {user_id} for {species}.")
+                WHERE user_id=? AND species=? AND regions=?
+            """, (user_id, species, regions), commit=True)
+            logging.info(f"Successfully sent availability notification to user {user_id} for {species} (regions: {regions}).")
         except discord.Forbidden:
             logging.warning(f"DM failed for user {user_id} (discord.Forbidden). Triggering fallback.")
             await handle_dm_failure(user_id, species, regions, lang)
@@ -550,20 +573,20 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False):
             else:
                 logging.error(f"HTTP error sending DM to user {user_id}: {e}", exc_info=True)
                 await execute_db("""
-                    UPDATE notifications SET status='failed' WHERE user_id=? AND species=?
-                """, (user_id, species), commit=True)
+                    UPDATE notifications SET status='failed' WHERE user_id=? AND species=? AND regions=?
+                """, (user_id, species, regions), commit=True)
         except Exception as e:
             logging.error(f"Error during message sending or DB update for user {user_id}, species {species}: {e}", exc_info=True)
             await execute_db("""
-                UPDATE notifications SET status='failed' WHERE user_id=? AND species=?
-            """, (user_id, species), commit=True)
+                UPDATE notifications SET status='failed' WHERE user_id=? AND species=? AND regions=?
+            """, (user_id, species, regions), commit=True)
     except Exception as e:
         logging.error(f"Critical error in trigger_availability_check for user {user_id}, species {species}: {e}", exc_info=True)
-        if 'user_id' in locals() and 'species' in locals():
+        if 'user_id' in locals() and 'species' in locals() and 'regions' in locals():
             try:
                 await execute_db("""
-                    UPDATE notifications SET status='failed' WHERE user_id=? AND species=?
-                """, (user_id, species), commit=True)
+                    UPDATE notifications SET status='failed' WHERE user_id=? AND species=? AND regions=?
+                """, (user_id, species, regions), commit=True)
             except Exception as db_err:
                 logging.error(f"Failed to even set status to 'failed' after critical error: {db_err}")
 async def handle_dm_failure(user_id, species, regions, lang):
@@ -886,6 +909,7 @@ async def notification(
     ctx,
     species: discord.Option(str, "Specific species (e.g., Messor barbarus)", required=False, default=None),
     genus: discord.Option(str, "Genus (e.g., Messor) - notifies for ALL species in this genus", required=False, default=None),
+    exclude_species: discord.Option(str, "Comma-separated species to exclude (only used with 'genus')", required=False, default=None),
     regions: discord.Option(str, "Regions (comma-separated, e.g., de,at,eu or 'ch' if swiss_only=True)", required=False, default=None),
     swiss_only: discord.Option(bool, "Only CH-delivering stores (overrides regions)", default=False),
     force: discord.Option(bool, "Force notification even if already active", default=False)
@@ -905,7 +929,12 @@ async def notification(
         return
     search_term = species if species else genus
     search_type = "species" if species else "genus"
-    logging.info(f"Notification request: User={ctx.author.id}, Term='{search_term}' (Type: {search_type}), Regions='{regions}', CH={swiss_only}, Force={force}")
+    excluded_species_str = None
+    if search_type == "genus" and exclude_species:
+        excluded_species_str = exclude_species.strip().lower()
+        if not excluded_species_str:
+             excluded_species_str = None
+    logging.info(f"Notification request: User={ctx.author.id}, Term='{search_term}' (Type: {search_type}), Exclude='{excluded_species_str}', Regions='{regions}', CH={swiss_only}, Force={force}")
     valid_regions = []
     ch_shops = None
     if swiss_only:
@@ -942,21 +971,21 @@ async def notification(
         try:
             regions_str = ",".join(valid_regions)
             user_id_str = str(ctx.author.id)
+
             existing_active = await execute_db("""
                 SELECT 1 FROM notifications
                 WHERE user_id = ? AND species = ? AND regions = ? AND status = 'active'
             """, (user_id_str, search_term, regions_str), fetch=True)
             if existing_active and not force:
-                 await ctx.respond(l10n.get('notification_exists_active', lang, species=search_term, regions=regions_str), ephemeral=True)
+                 await ctx.respond(l10n.get('notification_exists_active', lang, species=search_term, regions=regions_str))
                  return
             rowcount = await execute_db("""
-                INSERT INTO notifications (user_id, species, regions, status)
-                VALUES (?, ?, ?, 'active')
+                INSERT INTO notifications (user_id, species, regions, status, excluded_species)
+                VALUES (?, ?, ?, 'active', ?)
                 ON CONFLICT(user_id, species, regions)
-                DO UPDATE SET created_at=CURRENT_TIMESTAMP, status='active'
-            """, (user_id_str, search_term, regions_str), commit=True)
-
-            logging.debug(f"DB operation rowcount: {rowcount} for user {user_id_str}, term '{search_term}', regions '{regions_str}'")
+                DO UPDATE SET created_at=CURRENT_TIMESTAMP, status='active', excluded_species=excluded.excluded_species
+            """, (user_id_str, search_term, regions_str, excluded_species_str), commit=True)
+            logging.debug(f"DB operation rowcount: {rowcount} for user {user_id_str}, term '{search_term}', regions '{regions_str}', exclude '{excluded_species_str}'")
             response_key = 'notification_set'
             if force and not existing_active:
                  response_key = 'notification_set_forced'
@@ -973,20 +1002,33 @@ async def notification(
             if response_key == 'notification_reactivated': log_message += "reactivated/force-updated."
             elif response_key == 'notification_set_forced': log_message += "set (forced)."
             elif response_key == 'notification_set': log_message += "set."
+            if excluded_species_str:
+                 log_message += f" Excluding: '{excluded_species_str}'"
             logging.info(log_message)
-
-            await ctx.respond(l10n.get(response_key, lang, species=search_term, regions=regions_str), ephemeral=True)
+            response_params = {'species': search_term, 'regions': regions_str}
+            if excluded_species_str:
+                 response_params['excluded'] = excluded_species_str
+                 response_key += "_with_exclude"
+            await ctx.respond(l10n.get(response_key, lang, **response_params))
             if server_id:
                 await execute_db("""
                     INSERT OR IGNORE INTO server_user_mappings (user_id, server_id)
                     VALUES (?, ?)
                 """, (user_id_str, server_id), commit=True)
-            await ctx.followup.send(l10n.get('checking_availability', lang, species=search_term), ephemeral=True)
-            await trigger_availability_check(user_id_str, search_term, regions_str, ch_mode=swiss_only)
-
+            await ctx.followup.send(l10n.get('checking_availability', lang, species=search_term))
+            immediate_excluded_list = set()
+            if search_type == "genus" and excluded_species_str:
+                 immediate_excluded_list = {s.strip().lower() for s in excluded_species_str.split(',') if s.strip()}
+            await trigger_availability_check(
+                user_id_str,
+                search_term,
+                regions_str,
+                ch_mode=swiss_only,
+                excluded_species_list=immediate_excluded_list
+            )
         except sqlite3.Error as db_err:
              logging.error(f"Database error during notification setup for '{search_term}' (likely duplicate active): {db_err}", exc_info=True)
-             await ctx.respond(l10n.get('notification_exists_active', lang, species=search_term, regions=regions_str), ephemeral=True)
+             await ctx.respond(l10n.get('notification_exists_active', lang, species=search_term, regions=regions_str))
         except Exception as e:
             logging.error(f"Unexpected error setting notification for '{search_term}': {e}", exc_info=True)
             await ctx.respond(l10n.get('general_error', lang), ephemeral=True)
@@ -1194,7 +1236,7 @@ async def reloadshops(ctx):
     await sync_ratings()
     global SHOP_DATA
     SHOP_DATA = await load_shop_data()
-    await ctx.respond("Store data has been reloaded.", ephemeral=True)
+    await ctx.respond("Store data has been reloaded.")
 shopmapping = bot.create_group(
     name="shopmapping",
     description="Manage shop name mappings for Google Sheets imports! (only for AAM-Discord)",
@@ -1221,9 +1263,7 @@ async def shopmapping_add(
             ON CONFLICT(external_name) DO UPDATE SET shop_id=excluded.shop_id
         """, (external_name.strip(), shop_id), commit=True)
         await ctx.respond(
-            l10n.get("shopmapping_add_success", lang, external=external_name, id=shop_id, shop=SHOP_DATA[shop_id]['name']),
-            ephemeral=True
-        )
+            l10n.get("shopmapping_add_success", lang, external=external_name, id=shop_id, shop=SHOP_DATA[shop_id]['name']))
     except Exception as e:
         logging.error(f"Shopmapping add error: {e}")
         await ctx.respond(l10n.get("shopmapping_add_error", lang), ephemeral=True)
@@ -1235,7 +1275,7 @@ async def shopmapping_show(ctx):
     lang = await get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
     mappings = await execute_db("SELECT * FROM shop_name_mappings", fetch=True)
     if not mappings:
-        await ctx.respond(l10n.get("shopmapping_show_none", lang), ephemeral=True)
+        await ctx.respond(l10n.get("shopmapping_show_none", lang))
         return
     msg = [l10n.get("shopmapping_show_header", lang)]
     for row in mappings:
@@ -1243,7 +1283,7 @@ async def shopmapping_show(ctx):
         shop_id = row["shop_id"]
         shop_name = SHOP_DATA.get(shop_id, {}).get('name', 'Unknown')
         msg.append(l10n.get("shopmapping_show_entry", lang, external=ext_name, id=shop_id, shop=shop_name))
-    await ctx.respond("\n".join(msg), ephemeral=True)
+    await ctx.respond("\n".join(msg))
 @shopmapping.command(name="remove", description="Remove a shop mapping (only for AAM-Discord)")
 @admin_or_manage_messages()
 @allowed_channel()
@@ -1254,9 +1294,9 @@ async def shopmapping_remove(
     lang = await get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
     rowcount = await execute_db("DELETE FROM shop_name_mappings WHERE external_name=?", (external_name,), commit=True)
     if rowcount > 0:
-        await ctx.respond(l10n.get("shopmapping_remove_success", lang, external=external_name), ephemeral=True)
+        await ctx.respond(l10n.get("shopmapping_remove_success", lang, external=external_name))
     else:
-        await ctx.respond(l10n.get("shopmapping_remove_none", lang), ephemeral=True)
+        await ctx.respond(l10n.get("shopmapping_remove_none", lang))
 @bot.slash_command(name="serverlist", description="Shows all server information (only for bot owners)")
 @owner_only()
 @allowed_channel()
@@ -1329,9 +1369,7 @@ async def add(ctx, shop_id: discord.Option(str, "Shop-ID")):
         return
     if any(str(entry["shop_id"]) == shop_id for entry in current_data):
         await ctx.respond(
-            l10n.get('ch_delivery_exists', lang, shop=SHOP_DATA[shop_id]['name']),
-            ephemeral=True
-        )
+            l10n.get('ch_delivery_exists', lang, shop=SHOP_DATA[shop_id]['name']))
         return
     new_entry = {
         "shop_id": shop_id,
@@ -1342,9 +1380,7 @@ async def add(ctx, shop_id: discord.Option(str, "Shop-ID")):
     await save_ch_delivery_data(current_data)
     await ctx.respond(
         l10n.get('ch_delivery_add_success', lang,
-                shop=SHOP_DATA[shop_id]['name']),
-        ephemeral=True
-    )
+                shop=SHOP_DATA[shop_id]['name']))
 @ch_delivery.command(description="Remove store from CH delivery list (only for AAM-Discord and Admin/Mod)")
 @admin_or_manage_messages()
 @allowed_channel()
@@ -1363,9 +1399,7 @@ async def remove(ctx, shop_id: discord.Option(str, "Shop-ID")):
     await save_ch_delivery_data(new_data)
     await ctx.respond(
         l10n.get('ch_delivery_remove_success', lang,
-                shop=SHOP_DATA.get(shop_id, {}).get('name', shop_id)),
-        ephemeral=True
-    )
+                shop=SHOP_DATA.get(shop_id, {}).get('name', shop_id)))
 @ch_delivery.command(description="Show list of all CH suppliers (only for AAM-Discord)")
 @allowed_channel()
 async def show(ctx):
@@ -1373,7 +1407,7 @@ async def show(ctx):
     lang = await get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
     current_data = await load_ch_delivery_data()
     if not current_data:
-        await ctx.respond(l10n.get('ch_delivery_empty', lang), ephemeral=True)
+        await ctx.respond(l10n.get('ch_delivery_empty', lang))
         return
     entries = []
     for entry in current_data:
@@ -1387,7 +1421,7 @@ async def show(ctx):
                     timestamp=timestamp)
         )
     message = l10n.get('ch_delivery_header', lang) + "\n\n" + "\n".join(entries)
-    await ctx.respond(message[:2000], ephemeral=True)
+    await ctx.respond(message[:2000])
 # Automatisierte Aufgaben
 @tasks.loop(hours=168)
 async def optimize_db():
@@ -1479,10 +1513,24 @@ async def sync_ratings():
         logging.error(f"Error during combined shop reload and rating sync task: {e}", exc_info=True)
 @tasks.loop(minutes=5)
 async def check_availability():
-    rows = await execute_db("SELECT user_id, species, regions FROM notifications WHERE status='active'", fetch=True)
+    rows = await execute_db(
+        "SELECT user_id, species, regions, excluded_species FROM notifications WHERE status='active'",
+        fetch=True
+    )
     for row in rows:
-        user_id, species, regions = row["user_id"], row["species"], row["regions"]
-        await trigger_availability_check(user_id, species, regions)
+        user_id, species_or_genus, regions, excluded_species_str = row["user_id"], row["species"], row["regions"], row["excluded_species"]
+        is_genus_notification = " " not in species_or_genus.strip()
+        excluded_list = set()
+        if is_genus_notification and excluded_species_str:
+            excluded_list = {s.strip().lower() for s in excluded_species_str.split(',') if s.strip()}
+        ch_mode = regions == "ch"
+        await trigger_availability_check(
+            user_id,
+            species_or_genus,
+            regions,
+            ch_mode=ch_mode,
+            excluded_species_list=excluded_list
+        )
 @tasks.loop(seconds=60)
 async def update_bot_status():
     current_time = datetime.now()
@@ -1528,7 +1576,8 @@ async def on_ready():
                 regions TEXT,
                 status TEXT DEFAULT 'active',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                notified_at TIMESTAMP
+                notified_at TIMESTAMP,
+                excluded_species TEXT DEFAULT NULL
             );
             CREATE TABLE IF NOT EXISTS global_stats (
                 key TEXT PRIMARY KEY,
@@ -1565,8 +1614,8 @@ async def on_ready():
                 code TEXT PRIMARY KEY,
                 name TEXT
             );
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_active_notification
-            ON notifications(user_id, species, regions) WHERE status='active';
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_notification_user_species_regions
+            ON notifications(user_id, species, regions);
             CREATE INDEX IF NOT EXISTS idx_notifications_status ON notifications(status);
             INSERT OR IGNORE INTO global_stats (key, value) VALUES ('deleted_notifications', 0);
         """)

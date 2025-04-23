@@ -99,5 +99,9 @@
     "notification_error_neither_genus_species": "❌ Bitte gib entweder eine Art (species) oder eine Gattung (genus) an.",
     "notification_error_no_region": "❌ Bitte gib mindestens eine Region an (z.B. de, at, eu). Verfügbare Regionen mit Shops: {regions}",
     "species_or_genus_not_found": "❌ Die Art oder Gattung '{term}' konnte in den Produktdaten nicht gefunden werden.",
+    "notification_set_with_exclude": "🔔 Benachrichtigung für Gattung `{species}` in Regionen `{regions}` eingerichtet, ausgeschlossene Arten: `{excluded}`.",
+    "notification_set_forced_with_exclude": "⚠️ Benachrichtigung für Gattung `{species}` (Force-Modus) in Regionen `{regions}` eingerichtet, ausgeschlossene Arten: `{excluded}`.",
+    "notification_exists_active_with_exclude": "❌ Du hast bereits eine aktive Benachrichtigung für Gattung `{species}` in Regionen `{regions}`, ausgeschlossene Arten: `{excluded}`.",
+    "notification_reactivated_with_exclude": "🔄 Die Benachrichtigung für Gattung `{species}` in Regionen `{regions}` wurde reaktiviert, ausgeschlossene Arten: `{excluded}`.",
     "general_error": "❌ Ein Fehler ist aufgetreten"
 }
