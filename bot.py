@@ -162,6 +162,7 @@ def admin_or_manage_messages():
     return commands.check(predicate)
 async def species_exists(species):
     def sync_task():
+        species_lower = species.lower()
         for filename in os.listdir(DATA_DIRECTORY):
             if filename.startswith("products_shop_") and filename.endswith(".json"):
                 file_path = os.path.join(DATA_DIRECTORY, filename)
@@ -171,11 +172,18 @@ async def species_exists(species):
                     shop_id_from_filename = "unknown"
                 if not os.path.exists(file_path):
                     continue
-                with open(file_path, "r") as f:
-                    data = json.load(f)
-                    for product in data:
-                        if "title" in product and product["title"].strip().lower() == species.lower():
-                            return True
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        for product in data:
+                            if "title" in product and product["title"].strip().lower().startswith(species_lower):
+                                return True
+                except json.JSONDecodeError:
+                    logging.warning(f"Could not decode JSON from file: {filename}")
+                    continue
+                except Exception as e:
+                    logging.error(f"Error reading product file {filename}: {e}")
+                    continue
         return False
     return await bot.loop.run_in_executor(None, sync_task)
 async def check_availability_for_species(species, regions, user_id=None, ch_mode=False, ch_shops=None):
@@ -872,85 +880,111 @@ async def shop_list(
              await ctx.followup.send(l10n.get('general_error', lang), ephemeral=True)
          except Exception:
              logging.error("Failed to send error followup message.")
-@bot.slash_command(name="notification", description="Set up your notifications")
+@bot.slash_command(name="notification", description="Set up notifications for a specific species or an entire genus")
 @allowed_channel()
 async def notification(
     ctx,
-    species: discord.Option(str, "Which species do you want to be notified about?"),
-    regions: discord.Option(str, "For which regions do you want notifications?", required=False, default=None),
-    swiss_only: discord.Option(bool, "Only CH-delivering stores", default=False),
-    force: discord.Option(bool, "Force notification even if already set", default=False)
+    species: discord.Option(str, "Specific species (e.g., Messor barbarus)", required=False, default=None),
+    genus: discord.Option(str, "Genus (e.g., Messor) - notifies for ALL species in this genus", required=False, default=None),
+    regions: discord.Option(str, "Regions (comma-separated, e.g., de,at,eu or 'ch' if swiss_only=True)", required=False, default=None),
+    swiss_only: discord.Option(bool, "Only CH-delivering stores (overrides regions)", default=False),
+    force: discord.Option(bool, "Force notification even if already active", default=False)
 ):
-    logging.debug(f"Context type: {type(ctx)}")
-    logging.debug(f"Author type: {type(ctx.author)}")
-    logging.debug(f"Context before author access: {ctx}")
-    global SHOP_DATA
-    SHOP_DATA = await load_shop_data()
     server_id = ctx.guild.id if ctx.guild else None
     lang = await get_user_lang(ctx.author.id, server_id)
+    global SHOP_DATA
+    SHOP_DATA = await load_shop_data()
+    if species and genus:
+        await ctx.respond(l10n.get('notification_error_both_genus_species', lang), ephemeral=True)
+        return
+    if not species and not genus:
+        await ctx.respond(l10n.get('notification_error_neither_genus_species', lang), ephemeral=True)
+        return
+    search_term = species if species else genus
+    search_type = "species" if species else "genus" # For logging or potential future use
+    logging.info(f"Notification request: User={ctx.author.id}, Term='{search_term}' (Type: {search_type}), Regions='{regions}', CH={swiss_only}, Force={force}")
+    valid_regions = []
+    ch_shops = None
     if swiss_only:
         try:
             ch_data = await load_ch_delivery_data()
-            ch_shops = [entry["shop_id"] for entry in ch_data]
-        except FileNotFoundError:
+            ch_shops = {str(entry["shop_id"]) for entry in ch_data}
+            auto_ch_shops = {str(s_id) for s_id, s_data in SHOP_DATA.items() if s_data.get("country", "").lower() == "ch"}
+            ch_shops.update(auto_ch_shops)
+            regions_list = ["ch"]
+            valid_regions = ["ch"]
+            logging.debug(f"Swiss-only mode. Using CH regions. Found {len(ch_shops)} shops.")
+        except Exception as e:
+            logging.error(f"Error loading CH data for swiss_only mode: {e}")
             await ctx.respond(l10n.get('ch_notification_error', lang), ephemeral=True)
             return
-        regions_list = ["ch"]
-        valid_regions = ["ch"]
     else:
-        regions_list = [r.strip().lower() for r in regions.split(",")] if regions else []
-        regions_list = expand_regions(regions_list)
-        valid_regions = [r for r in regions_list if any(s["country"].lower() == r for s in SHOP_DATA.values())]
-        if not valid_regions:
-            available_regions = sorted({s["country"].lower() for s in SHOP_DATA.values()})
+        if not regions:
+            available_regions = sorted({s.get("country", "").lower() for s_id, s in SHOP_DATA.items() if s.get("country")})
             available_regions_str = ", ".join(available_regions)
+            await ctx.respond(l10n.get('notification_error_no_region', lang, regions=available_regions_str), ephemeral=True)
+            return
+        regions_list = [r.strip().lower() for r in regions.split(",")] if regions else []
+        await load_eu_countries_if_needed()
+        expanded_regions_list = expand_regions(regions_list)
+        available_shop_countries = {s.get("country", "").lower() for s_id, s in SHOP_DATA.items() if s.get("country")}
+        valid_regions = [r for r in expanded_regions_list if r in available_shop_countries]
+        if not valid_regions:
+            available_regions_str = ", ".join(sorted(available_shop_countries))
             await ctx.respond(l10n.get('invalid_regions', lang, regions=available_regions_str), ephemeral=True)
             return
-    species_found = await species_exists(species)
-    if species_found or force:
+        logging.debug(f"Validated regions for notification: {valid_regions}")
+    term_exists = await species_exists(search_term)
+    if term_exists or force:
         try:
+            regions_str = ",".join(valid_regions)
+            user_id_str = str(ctx.author.id)
+
             rowcount = await execute_db("""
                 INSERT INTO notifications (user_id, species, regions, status)
                 VALUES (?, ?, ?, 'active')
                 ON CONFLICT(user_id, species, regions) WHERE status='active'
-                DO UPDATE SET created_at=CURRENT_TIMESTAMP
-            """, (str(ctx.author.id), species, ",".join(valid_regions)), commit=True)
-            is_new = rowcount == 1
-            if is_new:
-                response_key = 'notification_set_forced' if not species_found else 'notification_set'
+                DO UPDATE SET created_at=CURRENT_TIMESTAMP, status='active'
+            """, (user_id_str, search_term, regions_str), commit=True)
+            is_new_or_reactivated = rowcount >= 0
+
+            logging.debug(f"DB operation rowcount: {rowcount} for user {user_id_str}, term '{search_term}', regions '{regions_str}'")
+            response_key = 'notification_set' # Default
+            if force and not is_new_or_reactivated:
+                 response_key = 'notification_reactivated'
+            elif is_new_or_reactivated:
+                 previous_inactive = await execute_db("""
+                     SELECT 1 FROM notifications
+                     WHERE user_id = ? AND species = ? AND regions = ? AND status != 'active'
+                 """, (user_id_str, search_term, regions_str), fetch=True)
+                 if previous_inactive:
+                     response_key = 'notification_reactivated'
+                 else:
+                      response_key = 'notification_set_forced' if force else 'notification_set'
             else:
-                response_key = 'notification_reactivated'
-            await ctx.respond(l10n.get(response_key, lang, species=species, regions=", ".join(valid_regions)))
-            await asyncio.sleep(1)
+                 response_key = 'notification_exists_active'
+            log_message = f"Notification for '{search_term}' (User: {user_id_str}) "
+            if response_key == 'notification_reactivated': log_message += "reactivated."
+            elif response_key == 'notification_set_forced': log_message += "set (forced)."
+            elif response_key == 'notification_set': log_message += "set."
+            else: log_message += "already active."
+            logging.info(log_message)
+            await ctx.respond(l10n.get(response_key, lang, species=search_term, regions=regions_str))
             if server_id:
                 await execute_db("""
                     INSERT OR IGNORE INTO server_user_mappings (user_id, server_id)
                     VALUES (?, ?)
-                """, (str(ctx.author.id), server_id))
-            await ctx.followup.send(l10n.get('checking_availability', lang, species=species))
-            await trigger_availability_check(ctx.author.id, species, ",".join(valid_regions))
-        except sqlite3.IntegrityError:
-            if force:
-                rowcount = await execute_db("""
-                    UPDATE notifications
-                    SET created_at=CURRENT_TIMESTAMP
-                    WHERE user_id=? AND species=? AND regions=? AND status='active'
-                """, (str(ctx.author.id), species, ",".join(valid_regions)), commit=True)
-                if rowcount > 0:
-                    await ctx.respond(l10n.get('notification_reactivated', lang, species=species, regions=", ".join(valid_regions)))
-                else:
-                    try:
-                        await execute_db("""
-                            INSERT INTO notifications (user_id, species, regions, status)
-                            VALUES (?, ?, ?, 'active')
-                        """, (str(ctx.author.id), species, ",".join(valid_regions)))
-                        await ctx.respond(l10n.get('notification_set_forced', lang, species=species, regions=", ".join(valid_regions)))
-                    except sqlite3.IntegrityError:
-                        await ctx.respond(l10n.get('notification_exists_active', lang, species=species, regions=", ".join(valid_regions)), ephemeral=True)
-            else:
-                await ctx.respond(l10n.get('notification_exists_active', lang, species=species, regions=", ".join(valid_regions)), ephemeral=True)
+                """, (user_id_str, server_id), commit=True)
+            await ctx.followup.send(l10n.get('checking_availability', lang, species=search_term), ephemeral=True)
+            await trigger_availability_check(user_id_str, search_term, regions_str, ch_mode=swiss_only)
+        except sqlite3.Error as db_err:
+            logging.error(f"Database error during notification setup for '{search_term}': {db_err}", exc_info=True)
+            await ctx.respond(l10n.get('notification_exists_active', lang, species=search_term, regions=regions_str), ephemeral=True)
+        except Exception as e:
+            logging.error(f"Unexpected error setting notification for '{search_term}': {e}", exc_info=True)
+            await ctx.respond(l10n.get('general_error', lang), ephemeral=True)
     else:
-        await ctx.respond(l10n.get('species_not_found', lang), ephemeral=True)
+        await ctx.respond(l10n.get('species_or_genus_not_found', lang, term=search_term), ephemeral=True)
 @bot.slash_command(name="delete_notifications", description="Delete your notifications")
 @allowed_channel()
 async def delete_notifications(ctx, ids: discord.Option(str, "Enter the IDs of the notifications to delete (comma-separated)")):

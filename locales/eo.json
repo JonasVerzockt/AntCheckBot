@@ -44,7 +44,7 @@
     "testnotification_dm": "📨 Testmesaĝo sukcesa!",
     "testnotification_forbidden": "❌ Ne eblis sendi PN – bonvolu aktivigi privatajn mesaĝojn",
     "availability_header": "🔔 **Disponebleca alarmo** por {species}!",
-    "availability_entry": "🏪 **Butiko:** {shop} - [AAM-Rating](<https://docs.google.com/spreadsheets/d/1Ymc8M5GHwfKbdh0QMRhZhL5zUK2wMRua0vk6v1MxiYE/edit?usp=sharing>): {rating} \n💶 **Prezintervalo:** {min_price}-{max_price}{currency} \n🔗 [Produkto-ligilo](<{product_url}>) | 🏠 [Butiko-ĉefpaĝo](<{shop_url}>)",
+    "availability_entry": "🏪 **Butiko:** {shop} - [AAM-Rating](<https://docs.google.com/spreadsheets/d/1Ymc8M5GHwfKbdh0QMRhZhL5zUK2wMRua0vk6v1MxiYE/edit?usp=sharing>): {rating} \n🐜 - **{species}** \n💶 **Prezintervalo:** {min_price}-{max_price}{currency} \n🔗 [Produkto-ligilo](<{product_url}>) | 🏠 [Butiko-ĉefpaĝo](<{shop_url}>)",
     "all_channels": "ĉiuj kanaloj",
     "notification_expired_dm": "Via serĉo pri {species} ({regions}) eksvalidiĝis kaj ne plu estas kontrolata. Vi povas iam ajn krei novan sciigon.",
     "dm_failed": "Mi ne povis sendi al vi privatan mesaĝon. Bonvolu ebligi viajn rektajn mesaĝojn por ricevi sciigojn!",
