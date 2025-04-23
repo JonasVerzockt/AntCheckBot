@@ -1544,6 +1544,18 @@ async def update_bot_status():
         f"Uptime: {uptime_days}d {uptime_hours}h {uptime_minutes}m")
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=status_message))
 @bot.event
+async def on_application_command_error(ctx, error):
+    lang = await get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
+    if isinstance(error, commands.CheckFailure):
+        if str(error) == l10n.get('wrong_channel', lang):
+            await ctx.respond(l10n.get('wrong_channel', lang))
+        else:
+            await ctx.respond(l10n.get('no_permissions', lang))
+    else:
+        print(f'Ignoring exception in command {ctx.command}:', file=sys.stderr)
+        traceback.print_exception(type(error), error, error.__traceback__, file=sys.stderr)
+        await ctx.respond(l10n.get('general_error', lang))
+@bot.event
 async def on_ready():
     global EU_COUNTRY_CODES, SHOP_DATA
     logging.info("Bot starting up...")
