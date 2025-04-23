@@ -103,5 +103,8 @@
     "notification_set_forced_with_exclude": "⚠️ Benachrichtigung für Gattung `{species}` (Force-Modus) in Regionen `{regions}` eingerichtet, ausgeschlossene Arten: `{excluded}`.",
     "notification_exists_active_with_exclude": "❌ Du hast bereits eine aktive Benachrichtigung für Gattung `{species}` in Regionen `{regions}`, ausgeschlossene Arten: `{excluded}`.",
     "notification_reactivated_with_exclude": "🔄 Die Benachrichtigung für Gattung `{species}` in Regionen `{regions}` wurde reaktiviert, ausgeschlossene Arten: `{excluded}`.",
+    "availability_check_success": "✅ Verfügbarkeitsprüfung für '{species}' erfolgreich! Artikel gefunden und eine PN wurde gesendet.",
+    "availability_check_not_found": "❌ Verfügbarkeitsprüfung für '{species}' abgeschlossen. Aktuell keine passenden Artikel verfügbar. Die Anfrage bleibt aktiv.",
+    "availability_check_error": "⚠️ Bei der Verfügbarkeitsprüfung für '{species}' ist ein Fehler aufgetreten. Bitte versuche es später erneut oder kontaktiere den Support, falls das Problem weiterhin besteht.",
     "general_error": "❌ Ein Fehler ist aufgetreten"
 }

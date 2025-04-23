@@ -103,5 +103,8 @@
     "notification_set_forced_with_exclude": "⚠️ Sciigo starigita por genro `{species}` (Forta reĝimo) en regionoj `{regions}`, ekskludante speciojn: `{excluded}`.",
     "notification_exists_active_with_exclude": "❌ Vi jam havas aktivan sciigon por genro `{species}` en regionoj `{regions}`, ekskludante speciojn: `{excluded}`.",
     "notification_reactivated_with_exclude": "🔄 La sciigo por genro `{species}` en regionoj `{regions}` estis reaktivigita, ekskludante speciojn: `{excluded}`.",
+    "availability_check_success": "✅ Sukcesa kontrolo pri disponebleco por '{species}'! Eroj trovitaj kaj privata mesaĝo estis sendita.",
+    "availability_check_not_found": "❌ Kontrolo pri disponebleco por '{species}' finita. Neniuj kongruaj eroj disponeblas nuntempe. La peto restas aktiva.",
+    "availability_check_error": "⚠️ Eraro okazis dum la kontrolo pri disponebleco por '{species}'. Bonvolu reprovi poste aŭ kontaktu la subtenon se la problemo daŭras.",
     "general_error": "❌ Okazis eraro"
 }

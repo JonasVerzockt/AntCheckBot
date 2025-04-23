@@ -103,5 +103,8 @@
     "notification_set_forced_with_exclude": "⚠️ Notification set for genus `{species}` (Force mode) in regions `{regions}`, excluding species: `{excluded}`.",
     "notification_exists_active_with_exclude": "❌ You already have an active notification for genus `{species}` in regions `{regions}`, excluding species: `{excluded}`.",
     "notification_reactivated_with_exclude": "🔄 The notification for genus `{species}` in regions `{regions}` has been reactivated, excluding species: `{excluded}`.",
+    "availability_check_success": "✅ Availability check successful for '{species}'! Items found and a DM has been sent.",
+    "availability_check_not_found": "❌ Availability check completed for '{species}'. No items currently available matching your criteria. The request remains active.",
+    "availability_check_error": "⚠️ An error occurred during the availability check for '{species}'. Please try again later or contact support if the issue persists.",
     "general_error": "❌ An error has occurred"
 }

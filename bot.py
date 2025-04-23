@@ -29,12 +29,12 @@ Contact: https://github.com/JonasVerzockt/
 """
 import discord
 from discord.ext import commands, tasks
+import discord.errors
 import sqlite3
 import json
 import os
 import logging
 from datetime import datetime, timedelta
-import asyncio
 import psutil
 import platform
 from pathlib import Path
@@ -119,12 +119,20 @@ class Localization:
             return f"[ERROR: Missing data for {key}]"
 l10n = Localization()
 async def get_user_lang(user_id, server_id):
-    rows = await execute_db("SELECT language FROM user_settings WHERE user_id=?", (user_id,), fetch=True)
-    if rows:
-        return rows[0][0]
-    rows = await execute_db("SELECT language FROM server_settings WHERE server_id=?", (server_id,), fetch=True)
-    if rows:
-        return rows[0][0]
+    logging.info(f"get_user_lang called with user_id={user_id}, server_id={server_id}")
+    rows_user = await execute_db("SELECT language FROM user_settings WHERE user_id=?", (user_id,), fetch=True)
+    logging.info(f"DB result for user_settings: {rows_user}")
+    if rows_user:
+        user_lang = rows_user[0][0]
+        logging.info(f"Returning user language: {user_lang}")
+        return user_lang
+    rows_server = await execute_db("SELECT language FROM server_settings WHERE server_id=?", (server_id,), fetch=True)
+    logging.info(f"DB result for server_settings: {rows_server}")
+    if rows_server:
+        server_lang = rows_server[0][0]
+        logging.info(f"Returning server language: {server_lang}")
+        return server_lang
+    logging.info("Returning default language: 'en'")
     return 'en'
 # Hilfefunktionen und Decorators
 async def ensure_shop_data():
@@ -468,13 +476,13 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False, e
                 regions_list = ["ch"]
             except FileNotFoundError:
                 logging.error("CH delivery file 'shops_ch_delivery.json' not found")
-                return
+                return None
             except json.JSONDecodeError:
                 logging.error("Invalid JSON format in CH delivery file 'shops_ch_delivery.json'")
-                return
+                return None
             except Exception as e:
                 logging.error(f"Error loading CH data from 'shops_ch_delivery.json': {e}")
-                return
+                return None
         else:
             regions_list = regions.split(",") if isinstance(regions, str) else regions
             regions_list = expand_regions(regions_list)
@@ -489,29 +497,29 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False, e
             )
         except FileNotFoundError as e:
             logging.error(f"Missing product file during availability check: {e.filename}")
-            return
+            return None
         except Exception as e:
             logging.error(f"Error during availability check function call: {e}", exc_info=True)
-            return
+            return None
         if not available:
             logging.debug(f"No available products found for {species} in {regions} (excluding: {excluded_species_list})")
-            return
+            return False
         user = None
         try:
             user = await bot.fetch_user(int(user_id))
             logging.debug(f"Fetched user object type: {type(user)} for ID: {user_id}")
         except discord.NotFound:
             logging.error(f"User {user_id} not found via fetch_user.")
-            return
+            return None
         except discord.HTTPException as e:
             logging.error(f"HTTP error fetching user {user_id}: {e}")
-            return
+            return None
         except ValueError:
              logging.error(f"Invalid user ID format: {user_id}")
-             return
+             return None
         if not user:
             logging.error(f"User object for {user_id} is None after fetch attempt.")
-            return
+            return None
         products_with_ratings = []
         for product in available:
             shop_id = str(product['shop_id'])
@@ -563,9 +571,11 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False, e
                 WHERE user_id=? AND species=? AND regions=?
             """, (user_id, species, regions), commit=True)
             logging.info(f"Successfully sent availability notification to user {user_id} for {species} (regions: {regions}).")
+            return True
         except discord.Forbidden:
             logging.warning(f"DM failed for user {user_id} (discord.Forbidden). Triggering fallback.")
             await handle_dm_failure(user_id, species, regions, lang)
+            return None
         except discord.HTTPException as e:
             if hasattr(e, "status") and e.status == 429:
                 logging.warning(f"Rate limit reached sending DM to user {user_id}: {e}. Retrying after delay.")
@@ -575,11 +585,13 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False, e
                 await execute_db("""
                     UPDATE notifications SET status='failed' WHERE user_id=? AND species=? AND regions=?
                 """, (user_id, species, regions), commit=True)
+                return None
         except Exception as e:
             logging.error(f"Error during message sending or DB update for user {user_id}, species {species}: {e}", exc_info=True)
             await execute_db("""
                 UPDATE notifications SET status='failed' WHERE user_id=? AND species=? AND regions=?
             """, (user_id, species, regions), commit=True)
+            return None
     except Exception as e:
         logging.error(f"Critical error in trigger_availability_check for user {user_id}, species {species}: {e}", exc_info=True)
         if 'user_id' in locals() and 'species' in locals() and 'regions' in locals():
@@ -587,8 +599,10 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False, e
                 await execute_db("""
                     UPDATE notifications SET status='failed' WHERE user_id=? AND species=? AND regions=?
                 """, (user_id, species, regions), commit=True)
+                return None
             except Exception as db_err:
                 logging.error(f"Failed to even set status to 'failed' after critical error: {db_err}")
+                return None
 async def handle_dm_failure(user_id, species, regions, lang):
     try:
         servers = await execute_db("""
@@ -1019,19 +1033,28 @@ async def notification(
             immediate_excluded_list = set()
             if search_type == "genus" and excluded_species_str:
                  immediate_excluded_list = {s.strip().lower() for s in excluded_species_str.split(',') if s.strip()}
-            await trigger_availability_check(
+            check_successful = await trigger_availability_check(
                 user_id_str,
                 search_term,
                 regions_str,
                 ch_mode=swiss_only,
                 excluded_species_list=immediate_excluded_list
             )
+            if check_successful is True:
+                final_status_message = l10n.get('availability_check_success', lang, species=search_term)
+                await ctx.followup.send(final_status_message)
+            elif check_successful is False:
+                final_status_message = l10n.get('availability_check_not_found', lang, species=search_term)
+                await ctx.followup.send(final_status_message)
+            else:
+                final_status_message = l10n.get('availability_check_error', lang, species=search_term)
+                await ctx.followup.send(final_status_message)
         except sqlite3.Error as db_err:
              logging.error(f"Database error during notification setup for '{search_term}' (likely duplicate active): {db_err}", exc_info=True)
-             await ctx.respond(l10n.get('notification_exists_active', lang, species=search_term, regions=regions_str))
+             await ctx.followup.send(l10n.get('notification_exists_active', lang, species=search_term, regions=regions_str))
         except Exception as e:
             logging.error(f"Unexpected error setting notification for '{search_term}': {e}", exc_info=True)
-            await ctx.respond(l10n.get('general_error', lang), ephemeral=True)
+            await ctx.followup.send(l10n.get('general_error', lang))
     else:
         await ctx.respond(l10n.get('species_or_genus_not_found', lang, term=search_term), ephemeral=True)
 @bot.slash_command(name="delete_notifications", description="Delete your notifications")
@@ -1548,29 +1571,29 @@ async def on_application_command_error(ctx, error):
     try:
         lang = await get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
     except Exception as e:
-        logging.error(f"Error when determining the language in the error handler: {e}")
+        logging.error(f"Fehler beim Ermitteln der Sprache im Error Handler: {e}")
         lang = 'en'
     if isinstance(error, commands.CheckFailure) or isinstance(error, discord.errors.CheckFailure):
         wrong_channel_msg = l10n.get('wrong_channel', lang)
         if str(error) == wrong_channel_msg:
-            logging.debug(f"CheckFailure detected: Wrong channel. Message: '{str(error)}'")
+            logging.debug(f"CheckFailure erkannt: Falscher Kanal. Meldung: '{str(error)}'")
             try:
                 await ctx.respond(wrong_channel_msg)
             except Exception as e:
-                 logging.error(f"Error sending the 'wrong_channel' response: {e}")
+                 logging.error(f"Fehler beim Senden der 'wrong_channel'-Antwort: {e}")
         else:
-            logging.debug(f"CheckFailure detected: No authorizations or other check. Message: '{str(error)}'")
+            logging.debug(f"CheckFailure erkannt: Keine Berechtigungen oder anderer Check. Meldung: '{str(error)}'")
             no_permissions_msg = l10n.get('no_permission', lang)
             try:
                 await ctx.respond(no_permissions_msg)
             except Exception as e:
-                 logging.error(f"Error when sending the 'no_permission' response: {e}")
+                 logging.error(f"Fehler beim Senden der 'no_permission'-Antwort: {e}")
 
     elif isinstance(error, commands.CommandNotFound):
-        logging.warning(f"Unknown command attempted: {ctx.command}")
+        logging.warning(f"Unbekannter Befehl versucht: {ctx.command}")
         pass
     else:
-        logging.error(f'Unhandled error in the command {ctx.command}: {type(error).__name__} - {error}')
+        logging.error(f'Unbehandelter Fehler im Befehl {ctx.command}: {type(error).__name__} - {error}')
         print(f'Ignoring exception in command {ctx.command}:', file=sys.stderr)
         traceback.print_exception(type(error), error, error.__traceback__, file=sys.stderr)
         general_error_msg = l10n.get('general_error', lang)
@@ -1582,7 +1605,7 @@ async def on_application_command_error(ctx, error):
         except discord.NotFound:
              logging.warning("Interaction nicht gefunden beim Senden der allgemeinen Fehlermeldung.")
         except Exception as e:
-            logging.error(f"Could not send general error message: {e}")
+            logging.error(f"Konnte allgemeine Fehlermeldung nicht senden: {e}")
 @bot.event
 async def on_ready():
     global EU_COUNTRY_CODES, SHOP_DATA
