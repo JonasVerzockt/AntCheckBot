@@ -94,5 +94,10 @@
     "no_shops_found": "❌ No shops found.",
     "help_export": "`/export_data` – Export all your saved data as a JSON file.",
     "help_ch_mapping": "`/ch_delivery` – Manage the list of shops that deliver to Switzerland (only for AAM-Discord).",
+    "notification_error_species_format": "❌ Error: The species name '{species}' is invalid. It must contain a space (e.g., 'Genus species').",
+    "notification_error_both_genus_species": "❌ Please provide either a species (species) or a genus (genus), not both.",
+    "notification_error_neither_genus_species": "❌ Please provide either a species (species) or a genus (genus).",
+    "notification_error_no_region": "❌ Please specify at least one region (e.g., de, at, eu). Available regions with shops: {regions}",
+    "species_or_genus_not_found": "❌ The species or genus '{term}' could not be found in the product data.",
     "general_error": "❌ An error has occurred"
 }

@@ -94,5 +94,10 @@
     "no_shops_found": "❌ Keine Shops gefunden.",
     "help_export": "`/export_data` – Exportiere alle deine gespeicherten Daten als JSON-Datei.",
     "help_ch_mapping": "`/ch_delivery` – Verwalte die Liste der Shops, die in die Schweiz liefern (nur für AAM-Discord).",
+    "notification_error_species_format": "❌ Fehler: Der Artname '{species}' ist ungültig. Er muss ein Leerzeichen enthalten (z.B. 'Gattung Art').",
+    "notification_error_both_genus_species": "❌ Bitte gib entweder eine Art (species) oder eine Gattung (genus) an, nicht beides.",
+    "notification_error_neither_genus_species": "❌ Bitte gib entweder eine Art (species) oder eine Gattung (genus) an.",
+    "notification_error_no_region": "❌ Bitte gib mindestens eine Region an (z.B. de, at, eu). Verfügbare Regionen mit Shops: {regions}",
+    "species_or_genus_not_found": "❌ Die Art oder Gattung '{term}' konnte in den Produktdaten nicht gefunden werden.",
     "general_error": "❌ Ein Fehler ist aufgetreten"
 }

@@ -900,8 +900,11 @@ async def notification(
     if not species and not genus:
         await ctx.respond(l10n.get('notification_error_neither_genus_species', lang), ephemeral=True)
         return
+    if species is not None and " " not in species:
+        await ctx.respond(l10n.get('notification_error_species_format', lang, species=species), ephemeral=True)
+        return
     search_term = species if species else genus
-    search_type = "species" if species else "genus" # For logging or potential future use
+    search_type = "species" if species else "genus"
     logging.info(f"Notification request: User={ctx.author.id}, Term='{search_term}' (Type: {search_type}), Regions='{regions}', CH={swiss_only}, Force={force}")
     valid_regions = []
     ch_shops = None
@@ -939,37 +942,40 @@ async def notification(
         try:
             regions_str = ",".join(valid_regions)
             user_id_str = str(ctx.author.id)
-
+            existing_active = await execute_db("""
+                SELECT 1 FROM notifications
+                WHERE user_id = ? AND species = ? AND regions = ? AND status = 'active'
+            """, (user_id_str, search_term, regions_str), fetch=True)
+            if existing_active and not force:
+                 await ctx.respond(l10n.get('notification_exists_active', lang, species=search_term, regions=regions_str), ephemeral=True)
+                 return
             rowcount = await execute_db("""
                 INSERT INTO notifications (user_id, species, regions, status)
                 VALUES (?, ?, ?, 'active')
-                ON CONFLICT(user_id, species, regions) WHERE status='active'
+                ON CONFLICT(user_id, species, regions)
                 DO UPDATE SET created_at=CURRENT_TIMESTAMP, status='active'
             """, (user_id_str, search_term, regions_str), commit=True)
-            is_new_or_reactivated = rowcount >= 0
 
             logging.debug(f"DB operation rowcount: {rowcount} for user {user_id_str}, term '{search_term}', regions '{regions_str}'")
-            response_key = 'notification_set' # Default
-            if force and not is_new_or_reactivated:
-                 response_key = 'notification_reactivated'
-            elif is_new_or_reactivated:
+            response_key = 'notification_set'
+            if force and not existing_active:
+                 response_key = 'notification_set_forced'
+            elif not existing_active:
                  previous_inactive = await execute_db("""
                      SELECT 1 FROM notifications
                      WHERE user_id = ? AND species = ? AND regions = ? AND status != 'active'
                  """, (user_id_str, search_term, regions_str), fetch=True)
                  if previous_inactive:
                      response_key = 'notification_reactivated'
-                 else:
-                      response_key = 'notification_set_forced' if force else 'notification_set'
-            else:
-                 response_key = 'notification_exists_active'
+            elif force and existing_active:
+                 response_key = 'notification_reactivated'
             log_message = f"Notification for '{search_term}' (User: {user_id_str}) "
-            if response_key == 'notification_reactivated': log_message += "reactivated."
+            if response_key == 'notification_reactivated': log_message += "reactivated/force-updated."
             elif response_key == 'notification_set_forced': log_message += "set (forced)."
             elif response_key == 'notification_set': log_message += "set."
-            else: log_message += "already active."
             logging.info(log_message)
-            await ctx.respond(l10n.get(response_key, lang, species=search_term, regions=regions_str))
+
+            await ctx.respond(l10n.get(response_key, lang, species=search_term, regions=regions_str), ephemeral=True)
             if server_id:
                 await execute_db("""
                     INSERT OR IGNORE INTO server_user_mappings (user_id, server_id)
@@ -977,9 +983,10 @@ async def notification(
                 """, (user_id_str, server_id), commit=True)
             await ctx.followup.send(l10n.get('checking_availability', lang, species=search_term), ephemeral=True)
             await trigger_availability_check(user_id_str, search_term, regions_str, ch_mode=swiss_only)
+
         except sqlite3.Error as db_err:
-            logging.error(f"Database error during notification setup for '{search_term}': {db_err}", exc_info=True)
-            await ctx.respond(l10n.get('notification_exists_active', lang, species=search_term, regions=regions_str), ephemeral=True)
+             logging.error(f"Database error during notification setup for '{search_term}' (likely duplicate active): {db_err}", exc_info=True)
+             await ctx.respond(l10n.get('notification_exists_active', lang, species=search_term, regions=regions_str), ephemeral=True)
         except Exception as e:
             logging.error(f"Unexpected error setting notification for '{search_term}': {e}", exc_info=True)
             await ctx.respond(l10n.get('general_error', lang), ephemeral=True)

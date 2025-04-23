@@ -94,5 +94,10 @@
     "no_shops_found": "❌ Neniuj butikoj trovitaj.",
     "help_export": "`/export_data` – Elportu ĉiujn viajn konservitajn datumojn kiel JSON-dosiero.",
     "help_ch_mapping": "`/ch_delivery` – Administru la liston de vendejoj, kiuj liveras al Svislando (nur AAM-Discord).",
+    "notification_error_species_format": "❌ Eraro: La specia nomo '{species}' estas nevalida. Ĝi devas enhavi spacostrekon (ekz., 'Genro specio').",
+    "notification_error_both_genus_species": "❌ Bonvolu doni aŭ specion (species) aŭ genron (genus), ne ambaŭ.",
+    "notification_error_neither_genus_species": "❌ Bonvolu doni aŭ specion (species) aŭ genron (genus).",
+    "notification_error_no_region": "❌ Bonvolu specifi almenaŭ unu regionon (ekz., de, at, eu). Disponeblaj regionoj kun vendejoj: {regions}",
+    "species_or_genus_not_found": "❌ La specio aŭ genro '{term}' ne troveblis en la produktaj datumoj.",
     "general_error": "❌ Okazis eraro"
 }
