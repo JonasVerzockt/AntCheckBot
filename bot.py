@@ -1545,16 +1545,44 @@ async def update_bot_status():
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=status_message))
 @bot.event
 async def on_application_command_error(ctx, error):
-    lang = await get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
-    if isinstance(error, commands.CheckFailure):
-        if str(error) == l10n.get('wrong_channel', lang):
-            await ctx.respond(l10n.get('wrong_channel', lang))
+    try:
+        lang = await get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
+    except Exception as e:
+        logging.error(f"Error when determining the language in the error handler: {e}")
+        lang = 'en'
+    if isinstance(error, commands.CheckFailure) or isinstance(error, discord.errors.CheckFailure):
+        wrong_channel_msg = l10n.get('wrong_channel', lang)
+        if str(error) == wrong_channel_msg:
+            logging.debug(f"CheckFailure detected: Wrong channel. Message: '{str(error)}'")
+            try:
+                await ctx.respond(wrong_channel_msg)
+            except Exception as e:
+                 logging.error(f"Error sending the 'wrong_channel' response: {e}")
         else:
-            await ctx.respond(l10n.get('no_permissions', lang))
+            logging.debug(f"CheckFailure detected: No authorizations or other check. Message: '{str(error)}'")
+            no_permissions_msg = l10n.get('no_permission', lang)
+            try:
+                await ctx.respond(no_permissions_msg)
+            except Exception as e:
+                 logging.error(f"Error when sending the 'no_permission' response: {e}")
+
+    elif isinstance(error, commands.CommandNotFound):
+        logging.warning(f"Unknown command attempted: {ctx.command}")
+        pass
     else:
+        logging.error(f'Unhandled error in the command {ctx.command}: {type(error).__name__} - {error}')
         print(f'Ignoring exception in command {ctx.command}:', file=sys.stderr)
         traceback.print_exception(type(error), error, error.__traceback__, file=sys.stderr)
-        await ctx.respond(l10n.get('general_error', lang))
+        general_error_msg = l10n.get('general_error', lang)
+        try:
+            if not ctx.interaction.response.is_done():
+                 await ctx.respond(general_error_msg)
+            else:
+                 await ctx.followup.send(general_error_msg)
+        except discord.NotFound:
+             logging.warning("Interaction nicht gefunden beim Senden der allgemeinen Fehlermeldung.")
+        except Exception as e:
+            logging.error(f"Could not send general error message: {e}")
 @bot.event
 async def on_ready():
     global EU_COUNTRY_CODES, SHOP_DATA
