@@ -106,5 +106,10 @@
     "availability_check_success": "✅ Availability check successful for '{species}'! Items found and a DM has been sent.",
     "availability_check_not_found": "❌ Availability check completed for '{species}'. No items currently available matching your criteria. The request remains active.",
     "availability_check_error": "⚠️ An error occurred during the availability check for '{species}'. Please try again later or contact support if the issue persists.",
+    "feedback_question": "Are you satisfied, or do you want to keep being notified of new entries?",
+    "feedback_positive_ack": "Okay, I’ll close your search.",
+    "feedback_continue_ack": "Okay, I’ll keep notifying you.",
+    "feedback_timeout": "Your search for **{species}** in `{regions}` has been closed – no feedback received.",
+    "reloadshops_success": "✅ Shop data has been reloaded successfully.",
     "general_error": "❌ An error has occurred"
 }

@@ -106,5 +106,10 @@
     "availability_check_success": "✅ Verfügbarkeitsprüfung für '{species}' erfolgreich! Artikel gefunden und eine PN wurde gesendet.",
     "availability_check_not_found": "❌ Verfügbarkeitsprüfung für '{species}' abgeschlossen. Aktuell keine passenden Artikel verfügbar. Die Anfrage bleibt aktiv.",
     "availability_check_error": "⚠️ Bei der Verfügbarkeitsprüfung für '{species}' ist ein Fehler aufgetreten. Bitte versuche es später erneut oder kontaktiere den Support, falls das Problem weiterhin besteht.",
+    "feedback_question": "Bist du zufrieden, oder möchtest du bei neuen Einträgen weiter informiert werden?",
+    "feedback_positive_ack": "Alles klar, ich beende deine Suche.",
+    "feedback_continue_ack": "Alles klar, ich informiere dich weiter.",
+    "feedback_timeout": "Deine Suche für **{species}** in `{regions}` wurde beendet – kein Feedback erhalten.",
+    "reloadshops_success": "✅ Shop-Daten wurden erfolgreich neu geladen.",
     "general_error": "❌ Ein Fehler ist aufgetreten"
 }
