@@ -44,6 +44,7 @@ from concurrent.futures import ThreadPoolExecutor
 import asyncio
 import sys
 import traceback
+import re
 # Pfade und Konfiguration
 SHOP_DATA = None
 BASE_DIR = Path(__file__).parent
@@ -135,6 +136,9 @@ async def get_user_lang(user_id, server_id):
     logging.info("Returning default language: 'en'")
     return 'en'
 # Hilfefunktionen und Decorators
+def normalize_species_name(name):
+    name = re.sub(r'\s*\b(cf|sp|aff)\.?\s*', ' ', name, flags=re.IGNORECASE)
+    return re.sub(r'\s+', ' ', name).strip().lower()
 async def ensure_shop_data():
     global SHOP_DATA
     if SHOP_DATA is None or asyncio.iscoroutine(SHOP_DATA):
@@ -170,27 +174,29 @@ def admin_or_manage_messages():
     return commands.check(predicate)
 async def species_exists(species):
     def sync_task():
-        species_lower = species.lower()
+        import re
+        def normalize_species_name(name):
+            name = re.sub(r'\s*\b(cf|sp|aff)\.?\s*', ' ', name, flags=re.IGNORECASE)
+            return re.sub(r'\s+', ' ', name).strip().lower()
+        normalized_search = normalize_species_name(species)
+        is_genus_search = ' ' not in normalized_search
         for filename in os.listdir(DATA_DIRECTORY):
             if filename.startswith("products_shop_") and filename.endswith(".json"):
                 file_path = os.path.join(DATA_DIRECTORY, filename)
                 try:
-                    shop_id_from_filename = int(filename.split("_")[2].split(".")[0])
-                except Exception:
-                    shop_id_from_filename = "unknown"
-                if not os.path.exists(file_path):
-                    continue
-                try:
                     with open(file_path, "r", encoding="utf-8") as f:
                         data = json.load(f)
                         for product in data:
-                            if "title" in product and product["title"].strip().lower().startswith(species_lower):
-                                return True
-                except json.JSONDecodeError:
-                    logging.warning(f"Could not decode JSON from file: {filename}")
-                    continue
+                            title = product.get("title", "").strip()
+                            normalized_title = normalize_species_name(title)
+                            if is_genus_search:
+                                if normalized_title.startswith(normalized_search + ' '):
+                                    return True
+                            else:
+                                if normalized_title == normalized_search:
+                                    return True
                 except Exception as e:
-                    logging.error(f"Error reading product file {filename}: {e}")
+                    logging.error(f"Error processing {filename}: {e}")
                     continue
         return False
     return await bot.loop.run_in_executor(None, sync_task)
@@ -250,33 +256,28 @@ async def check_availability_for_species(species_or_genus, regions, user_id=None
                         data = json.load(f)
                 except Exception:
                     continue
-                for product in data:
-                    title = product.get("title", "").strip()
-                    title_cf = title.casefold()
-                    in_stock = product.get("in_stock", False)
-                    product_shop_id = str(product.get("shop_id"))
-
-                    if product_shop_id in blacklisted_shops:
-                        continue
-                    if not in_stock:
-                        continue
-                    match = False
-                    if is_genus_search:
-                        if title_cf.startswith(search_term_cf):
-                            title_parts = title.split()
-                            if len(title_parts) > 1:
-                                product_species_name = title_parts[1].lower()
-                                if product_species_name not in excluded_species_list:
-                                    match = True
-                                else:
-                                     logger.debug(f"Excluding '{title}' because species '{product_species_name}' is in excluded list: {excluded_species_list}")
-                            else:
+            for product in data:
+                title = product.get("title", "").strip()
+                normalized_title = normalize_species_name(title)
+                normalized_search = normalize_species_name(species_or_genus)  
+                in_stock = product.get("in_stock", False)
+                product_shop_id = str(product.get("shop_id"))
+                if product_shop_id in blacklisted_shops or not in_stock:
+                    continue
+                match = False
+                is_genus_search = " " not in normalized_search
+                if is_genus_search:
+                    if normalized_title.startswith(normalized_search + ' '):
+                        title_parts = normalized_title.split()
+                        if len(title_parts) > 1:
+                            product_species = title_parts[1]
+                            if product_species not in excluded_species_list:
                                 match = True
-                    else:
-                        if title_cf.startswith(search_term_cf):
+                        else:
                             match = True
-                    if not match:
-                        continue
+                else:
+                    match = normalized_title == normalized_search
+                if match:
                     available_products.append({
                         "species": title,
                         "shop_name": shop_data["name"],
@@ -504,21 +505,19 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False, e
         if not available:
             logging.debug(f"No available products found for {species} in {regions} (excluding: {excluded_species_list})")
             return False
-        user = None
+        seen = await execute_db(
+            "SELECT product_id FROM user_seen_products WHERE user_id=?",
+            (user_id,), fetch=True
+        )
+        seen_ids = {r["product_id"] for r in seen}
+        new_products = [p for p in available if str(p["id"]) not in seen_ids]
+        if not new_products:
+            return False
+        available = new_products
         try:
             user = await bot.fetch_user(int(user_id))
-            logging.debug(f"Fetched user object type: {type(user)} for ID: {user_id}")
-        except discord.NotFound:
-            logging.error(f"User {user_id} not found via fetch_user.")
-            return None
-        except discord.HTTPException as e:
-            logging.error(f"HTTP error fetching user {user_id}: {e}")
-            return None
-        except ValueError:
-             logging.error(f"Invalid user ID format: {user_id}")
-             return None
-        if not user:
-            logging.error(f"User object for {user_id} is None after fetch attempt.")
+        except Exception as e:
+            logging.error(f"Could not fetch user {user_id}: {e}")
             return None
         products_with_ratings = []
         for product in available:
@@ -534,21 +533,9 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False, e
         message_entries = [header]
         for item in sorted_products_with_ratings:
             product = item["product_data"]
-            rating = item["rating"]
-            rating_str = format_rating(rating)
-            shop_id = str(product['shop_id'])
-            if SHOP_DATA is None:
-                 logging.error("SHOP_DATA is None in trigger_availability_check! Attempting reload...")
-                 await sync_ratings()
-                 SHOP_DATA = await load_shop_data()
-                 if SHOP_DATA is None:
-                      logging.error("Failed to reload SHOP_DATA!")
-                      shop_info = None
-                 else:
-                      shop_info = SHOP_DATA.get(shop_id)
-            else:
-                 shop_info = SHOP_DATA.get(shop_id)
-            shop_url = shop_info.get('url', 'N/A') if shop_info else 'N/A'
+            rating_str = format_rating(item["rating"])
+            shop_info = SHOP_DATA.get(str(product["shop_id"]), {})
+            shop_url = shop_info.get("url", "N/A")
             message_entries.append(l10n.get(
                 'availability_entry',
                 lang,
@@ -565,44 +552,43 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False, e
         try:
             for chunk in message_chunks:
                 await user.send(chunk)
+            for p in new_products:
+                await execute_db(
+                    "INSERT OR IGNORE INTO user_seen_products (user_id, product_id) VALUES (?, ?)",
+                    (user_id, str(p["id"])),
+                    commit=True
+                )
+            current_ids = {str(p["id"]) for p in available}
+            to_remove = seen_ids - current_ids
+            for pid in to_remove:
+                await execute_db(
+                    "DELETE FROM user_seen_products WHERE user_id=? AND product_id=?",
+                    (user_id, pid),
+                    commit=True
+                )
             await execute_db("""
                 UPDATE notifications
                 SET status='completed', notified_at=CURRENT_TIMESTAMP
                 WHERE user_id=? AND species=? AND regions=?
             """, (user_id, species, regions), commit=True)
-            logging.info(f"Successfully sent availability notification to user {user_id} for {species} (regions: {regions}).")
+            await ask_for_feedback(user, user_id, species, regions)
+            logging.info(f"Successfully sent availability notification to user {user_id} for {species}.")
             return True
         except discord.Forbidden:
-            logging.warning(f"DM failed for user {user_id} (discord.Forbidden). Triggering fallback.")
             await handle_dm_failure(user_id, species, regions, lang)
             return None
-        except discord.HTTPException as e:
-            if hasattr(e, "status") and e.status == 429:
-                logging.warning(f"Rate limit reached sending DM to user {user_id}: {e}. Retrying after delay.")
-                await asyncio.sleep(e.retry_after if hasattr(e, 'retry_after') else 5)
-            else:
-                logging.error(f"HTTP error sending DM to user {user_id}: {e}", exc_info=True)
-                await execute_db("""
-                    UPDATE notifications SET status='failed' WHERE user_id=? AND species=? AND regions=?
-                """, (user_id, species, regions), commit=True)
-                return None
         except Exception as e:
-            logging.error(f"Error during message sending or DB update for user {user_id}, species {species}: {e}", exc_info=True)
+            logging.error(f"Error sending DM to {user_id}: {e}", exc_info=True)
             await execute_db("""
                 UPDATE notifications SET status='failed' WHERE user_id=? AND species=? AND regions=?
             """, (user_id, species, regions), commit=True)
             return None
     except Exception as e:
-        logging.error(f"Critical error in trigger_availability_check for user {user_id}, species {species}: {e}", exc_info=True)
-        if 'user_id' in locals() and 'species' in locals() and 'regions' in locals():
-            try:
-                await execute_db("""
-                    UPDATE notifications SET status='failed' WHERE user_id=? AND species=? AND regions=?
-                """, (user_id, species, regions), commit=True)
-                return None
-            except Exception as db_err:
-                logging.error(f"Failed to even set status to 'failed' after critical error: {db_err}")
-                return None
+        logging.error(f"Critical error in trigger_availability_check for {user_id}, {species}: {e}", exc_info=True)
+        await execute_db("""
+            UPDATE notifications SET status='failed' WHERE user_id=? AND species=? AND regions=?
+        """, (user_id, species, regions), commit=True)
+        return None
 async def handle_dm_failure(user_id, species, regions, lang):
     try:
         servers = await execute_db("""
@@ -697,6 +683,69 @@ async def get_file_age(filename):
         except FileNotFoundError:
             return None, "File not found"
     return await bot.loop.run_in_executor(None, sync_task)
+async def ask_for_feedback(user, user_id, species, regions):
+    lang = await get_user_lang(user_id, None)
+    question = await user.send(
+        l10n.get('feedback_question', lang)
+    )
+    await question.add_reaction("👍")
+    await question.add_reaction("🔄")
+    pending_until = datetime.utcnow() + timedelta(hours=48)
+    await execute_db(
+        "UPDATE notifications SET status='pending_feedback', pending_feedback_until=? "
+        "WHERE user_id=? AND species=? AND regions=? AND status='completed'",
+        (pending_until.strftime("%Y-%m-%d %H:%M:%S"), user_id, species, regions),
+        commit=True
+    )
+
+    def check(reaction, reactor):
+        return (
+            reactor.id == int(user_id)
+            and reaction.message.id == question.id
+            and str(reaction.emoji) in ["👍", "🔄"]
+        )
+    try:
+        reaction, _ = await bot.wait_for(
+            "reaction_add",
+            timeout=48*3600,
+            check=check
+        )
+        if str(reaction.emoji) == "👍":
+            await execute_db(
+                "DELETE FROM user_seen_products WHERE user_id=?",
+                (user_id,), commit=True
+            )
+            await execute_db(
+                "UPDATE notifications SET status='completed', pending_feedback_until=NULL "
+                "WHERE user_id=? AND species=? AND regions=?",
+                (user_id, species, regions), commit=True
+            )
+            ack = l10n.get('feedback_positive_ack', lang)
+            await user.send(ack)
+        else:
+            await execute_db(
+                "UPDATE notifications SET status='active', pending_feedback_until=NULL "
+                "WHERE user_id=? AND species=? AND regions=?",
+                (user_id, species, regions), commit=True
+            )
+            ack = l10n.get('feedback_continue_ack', lang)
+            await user.send(ack)
+    except asyncio.TimeoutError:
+        await execute_db(
+            "UPDATE notifications SET status='expired', pending_feedback_until=NULL "
+            "WHERE user_id=? AND species=? AND regions=?",
+            (user_id, species, regions), commit=True
+        )
+        try:
+            timeout_msg = l10n.get(
+                'feedback_timeout',
+                lang,
+                species=species,
+                regions=regions
+            )
+            await user.send(timeout_msg)    
+        except:
+            pass
 # Befehle
 @bot.slash_command(name="startup",description="Set the server language and where the bot should respond (only Admin/Mod)")
 @admin_or_manage_messages()
@@ -1534,6 +1583,31 @@ async def sync_ratings():
         logging.debug("SHOP_DATA cache reloaded successfully after combined task.")
     except Exception as e:
         logging.error(f"Error during combined shop reload and rating sync task: {e}", exc_info=True)
+@tasks.loop(minutes=10)
+async def expire_pending_feedbacks():
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    rows = await execute_db(
+        "SELECT id, user_id, species, regions FROM notifications "
+        "WHERE status='pending_feedback' AND pending_feedback_until < ?",
+        (now,), fetch=True
+    )
+    for row in rows:
+        await execute_db(
+            "UPDATE notifications SET status='expired', pending_feedback_until=NULL WHERE id=?",
+            (row["id"],), commit=True
+        )
+        try:
+            user = await bot.fetch_user(int(row["user_id"]))
+            lang = await get_user_lang(row["user_id"], None)
+            msg = l10n.get(
+                'notification_expired_dm',
+                lang,
+                species=row["species"],
+                regions=row["regions"]
+            )
+            await user.send(msg)
+        except:
+            pass
 @tasks.loop(minutes=5)
 async def check_availability():
     rows = await execute_db(
@@ -1640,7 +1714,8 @@ async def on_ready():
                 status TEXT DEFAULT 'active',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 notified_at TIMESTAMP,
-                excluded_species TEXT DEFAULT NULL
+                excluded_species TEXT DEFAULT NULL,
+                pending_feedback_until TIMESTAMP DEFAULT NULL
             );
             CREATE TABLE IF NOT EXISTS global_stats (
                 key TEXT PRIMARY KEY,
@@ -1673,10 +1748,14 @@ async def on_ready():
                 banner_url TEXT,
                 description TEXT
             );
+            CREATE TABLE IF NOT EXISTS user_seen_products (
+                user_id TEXT,
+                product_id TEXT,
+                PRIMARY KEY (user_id, product_id)
+            );
             CREATE TABLE IF NOT EXISTS eu_countries (
                 code TEXT PRIMARY KEY,
                 name TEXT
-            );
             CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_notification_user_species_regions
             ON notifications(user_id, species, regions);
             CREATE INDEX IF NOT EXISTS idx_notifications_status ON notifications(status);
@@ -1723,6 +1802,7 @@ async def on_ready():
         if 'optimize_db' in globals() and isinstance(optimize_db, tasks.Loop): optimize_db.start()
         if 'sync_ratings' in globals() and isinstance(sync_ratings, tasks.Loop): sync_ratings.start()
         if 'update_server_infos' in globals() and isinstance(update_server_infos, tasks.Loop): update_server_infos.start()
+        if 'expire_pending_feedbacks' in globals() and isinstance(expire_pending_feedbacks, tasks.Loop): expire_pending_feedbacks.start()
         psutil.cpu_percent(interval=None)
         logging.info("Background tasks initiated.")
     except NameError as e:
