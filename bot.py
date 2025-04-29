@@ -200,9 +200,20 @@ async def species_exists(species):
                     continue
         return False
     return await bot.loop.run_in_executor(None, sync_task)
-async def check_availability_for_species(species_or_genus, regions, user_id=None, ch_mode=False, ch_shops=None, excluded_species_list=None):
+async def check_availability_for_species(
+    species_or_genus,
+    regions,
+    user_id=None,
+    ch_mode=False,
+    ch_shops=None,
+    excluded_species_list=None
+):
     logger = logging.getLogger("availability")
-    logger.info(f"Start availability check for: '{species_or_genus}', regions: {regions}, User: {user_id}, CH-Mode: {ch_mode}, Exclude: {excluded_species_list}")
+    logger.info(
+        f"Start availability check for: '{species_or_genus}', "
+        f"regions: {regions}, User: {user_id}, CH-Mode: {ch_mode}, "
+        f"Exclude: {excluded_species_list}"
+    )
     if user_id is not None:
         blacklisted_shops = await get_blacklisted_shops(user_id)
     else:
@@ -211,87 +222,90 @@ async def check_availability_for_species(species_or_genus, regions, user_id=None
     if excluded_species_list is None:
         excluded_species_list = set()
     def sync_task(blacklisted_shops, SHOP_DATA, ch_shops, excluded_species_list):
-        if ch_mode:
-            if not ch_shops:
-                try:
-                    with open("shops_ch_delivery.json", "r", encoding="utf-8") as f:
-                        ch_json_shops = {str(entry["shop_id"]) for entry in json.load(f)}
-                        logger.info(f"CH delivery list loaded with {len(ch_json_shops)} manual entries")
-                    auto_ch_shops = {
-                        str(shop_id) for shop_id, shop_data in SHOP_DATA.items()
-                        if shop_data.get("country", "").lower() == "ch"
-                    }
-                    logger.info(f"Found {len(auto_ch_shops)} auto-detected CH stores")
-                    ch_shops = ch_json_shops.union(auto_ch_shops)
-                    logger.info(f"Total CH stores: {len(ch_shops)} (manual: {len(ch_json_shops)}, auto: {len(auto_ch_shops)})")
-                except Exception as e:
-                    logger.error(f"CH mode initialization failed: {e}")
-                    return []
-            else:
-                logger.info(f"Using pre-loaded CH shops: {len(ch_shops)}")
         available_products = []
         search_term_cf = species_or_genus.strip().casefold()
         is_genus_search = " " not in species_or_genus.strip()
         for filename in os.listdir(DATA_DIRECTORY):
-            if filename.startswith("products_shop_") and filename.endswith(".json"):
-                file_path = os.path.join(DATA_DIRECTORY, filename)
-                try:
-                    shop_id_from_filename = int(filename.split("_")[2].split(".")[0])
-                except Exception:
+            if not (filename.startswith("products_shop_") and filename.endswith(".json")):
+                continue
+            file_path = os.path.join(DATA_DIRECTORY, filename)
+            try:
+                shop_id_from_filename = int(filename.split("_")[2].split(".")[0])
+            except Exception:
+                continue
+            shop_id_str = str(shop_id_from_filename)
+            if ch_mode:
+                if not ch_shops:
+                    try:
+                        with open("shops_ch_delivery.json", "r", encoding="utf-8") as f:
+                            manual = {str(e["shop_id"]) for e in json.load(f)}
+                        auto = {
+                            sid for sid, sd in SHOP_DATA.items()
+                            if sd.get("country", "").lower() == "ch"
+                        }
+                        ch_shops = manual.union(auto)
+                    except Exception as e:
+                        logger.error(f"CH mode init failed: {e}")
+                        return []
+                if shop_id_str not in ch_shops:
                     continue
-                shop_id_str = str(shop_id_from_filename)
-                if ch_mode and shop_id_str not in (ch_shops or set()):
-                    logger.debug(f"Shop {shop_id_str} not in CH list - skipped")
-                    continue
+            else:
                 shop_data = SHOP_DATA.get(shop_id_str)
                 if not shop_data:
                     continue
-                if not ch_mode:
-                    shop_country = shop_data.get("country", "").lower()
-                    if shop_country not in [r.lower() for r in regions]:
-                        logger.debug(f"Shop region {shop_country} not in {regions}")
-                        continue
-                try:
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                except Exception:
+                shop_country = shop_data.get("country", "").lower()
+                if shop_country not in [r.lower() for r in regions]:
                     continue
-            for product in data:
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    products = json.load(f)
+            except Exception:
+                continue
+            for product in products:
+                if not product.get("in_stock", False):
+                    continue
+                pid = str(product.get("shop_id"))
+                if pid in blacklisted_shops:
+                    continue
+
                 title = product.get("title", "").strip()
                 normalized_title = normalize_species_name(title)
-                normalized_search = normalize_species_name(species_or_genus)  
-                in_stock = product.get("in_stock", False)
-                product_shop_id = str(product.get("shop_id"))
-                if product_shop_id in blacklisted_shops or not in_stock:
-                    continue
+                normalized_search = normalize_species_name(species_or_genus)
                 match = False
-                is_genus_search = " " not in normalized_search
                 if is_genus_search:
-                    if normalized_title.startswith(normalized_search + ' '):
-                        title_parts = normalized_title.split()
-                        if len(title_parts) > 1:
-                            product_species = title_parts[1]
-                            if product_species not in excluded_species_list:
-                                match = True
-                        else:
+                    if normalized_title.startswith(normalized_search + " "):
+                        part = normalized_title.split()[1]
+                        if part not in excluded_species_list:
                             match = True
                 else:
                     match = normalized_title == normalized_search
                 if match:
+                    shop_info = SHOP_DATA.get(shop_id_str, {})
                     available_products.append({
+                        "id": product.get("id"),
                         "species": title,
-                        "shop_name": shop_data["name"],
-                        "min_price": product["min_price"],
-                        "max_price": product["max_price"],
-                        "currency_iso": product["currency_iso"],
-                        "antcheck_url": product["antcheck_url"],
-                        "shop_url": shop_data["url"],
+                        "shop_name": shop_info.get("name", ""),
+                        "min_price": product.get("min_price"),
+                        "max_price": product.get("max_price"),
+                        "currency_iso": product.get("currency_iso"),
+                        "antcheck_url": product.get("antcheck_url"),
+                        "shop_url": shop_info.get("url"),
                         "shop_id": shop_id_str
                     })
-        logger.info(f"Availability check completed for '{species_or_genus}'. Found: {len(available_products)}")
+        logger.info(
+            f"Availability check completed for '{species_or_genus}'. "
+            f"Found: {len(available_products)}"
+        )
         return available_products
     return await bot.loop.run_in_executor(
-        None, lambda: sync_task(blacklisted_shops, SHOP_DATA, ch_shops, excluded_species_list))
+        None,
+        lambda: sync_task(
+            blacklisted_shops,
+            SHOP_DATA,
+            ch_shops or set(),
+            excluded_species_list
+        )
+    )
 async def load_shop_data_from_google_sheets():
     def sync_task():
         import os
@@ -1682,10 +1696,8 @@ async def on_application_command_error(ctx, error):
             logging.error(f"Konnte allgemeine Fehlermeldung nicht senden: {e}")
 @bot.event
 async def on_ready():
-    global EU_COUNTRY_CODES, SHOP_DATA
+    global EU_COUNTRY_CODES
     logging.info("Bot starting up...")
-    EU_COUNTRY_CODES = await load_eu_countries()
-    SHOP_DATA = await load_shop_data()
     def init_db():
         init_conn = sqlite3.connect(BASE_DIR / "antcheckbot.db")
         init_cursor = init_conn.cursor()
@@ -1756,6 +1768,7 @@ async def on_ready():
             CREATE TABLE IF NOT EXISTS eu_countries (
                 code TEXT PRIMARY KEY,
                 name TEXT
+            );
             CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_notification_user_species_regions
             ON notifications(user_id, species, regions);
             CREATE INDEX IF NOT EXISTS idx_notifications_status ON notifications(status);
@@ -1764,36 +1777,32 @@ async def on_ready():
         init_conn.commit()
         init_conn.close()
         logging.info("Database schema initialized/verified.")
-
-    try:
-        await bot.loop.run_in_executor(None, init_db)
-        logging.info("Database initialization task completed.")
-    except Exception as e:
-        logging.error(f"FATAL: Database initialization failed: {e}", exc_info=True)
+    await bot.loop.run_in_executor(None, init_db)
+    logging.info("Database initialization task completed.")
     try:
         EU_COUNTRY_CODES = await load_eu_countries()
         if isinstance(EU_COUNTRY_CODES, (list, set)):
-             EU_COUNTRY_CODES = list(EU_COUNTRY_CODES)
-             logging.info(f"EU Countries loaded: {len(EU_COUNTRY_CODES)} codes found.")
+            EU_COUNTRY_CODES = list(EU_COUNTRY_CODES)
+            logging.info(f"EU Countries loaded: {len(EU_COUNTRY_CODES)} codes.")
         else:
-             logging.error(f"load_eu_countries returned unexpected type: {type(EU_COUNTRY_CODES)}. Setting to empty list.")
-             EU_COUNTRY_CODES = []
+            logging.error(f"Unexpected EU_COUNTRY_CODES type: {type(EU_COUNTRY_CODES)}")
+            EU_COUNTRY_CODES = []
     except Exception as e:
-        logging.error(f"FATAL: Failed to load EU countries during startup: {e}", exc_info=True)
+        logging.error(f"Failed to load EU countries: {e}")
         EU_COUNTRY_CODES = []
     try:
         SHOP_DATA = await load_shop_data()
-        logging.info(f"Shop data loaded: {len(SHOP_DATA)} shops found.")
+        logging.info(f"Shop data loaded: {len(SHOP_DATA)} shops.")
     except Exception as e:
-        logging.error(f"FATAL: Failed to load shop data during startup: {e}", exc_info=True)
+        logging.error(f"Failed to load shop data: {e}")
         SHOP_DATA = {}
     bot.start_time = datetime.now()
-    logging.info(f"Bot online: {bot.user.name}")
+    logging.info(f"Bot online: {bot.user}")
     try:
         await bot.sync_commands()
         logging.info("Commands synced successfully.")
     except Exception as e:
-        logging.error(f"Failed to sync commands: {e}", exc_info=True)
+        logging.error(f"Failed to sync commands: {e}")
     logging.info("Starting background tasks...")
     try:
         if 'clean_old_notifications' in globals() and isinstance(clean_old_notifications, tasks.Loop): clean_old_notifications.start()
