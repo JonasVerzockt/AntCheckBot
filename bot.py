@@ -3,8 +3,8 @@
 """
 File: bot.py
 Author: Jonas Beier
-Date: 2025-04-21
-Version: 4.0
+Date: 2025-07-02
+Version: 4.5
 Description:
     Dieses Skript implementiert einen Discord-Bot mit verschiedenen Funktionen,
     darunter Benachrichtigungen, Statistiken und Systemstatus. Es verwendet SQLite
@@ -46,12 +46,13 @@ import sys
 import traceback
 import re
 # Pfade und Konfiguration
-SHOP_DATA = None
+SHOP_DATA = {}
 BASE_DIR = Path(__file__).parent
 LOCALES_DIR = BASE_DIR / "locales"
 TOKEN = "TOKEN"
 DATA_DIRECTORY = "DIR"
 SHOPS_DATA_FILE = "shops_data.json"
+DM_BLOCKED_FILE = BASE_DIR / "dm_blocked_users.json"
 SERVER_IDS = [ID1, ID2]
 BOT_OWNER = USERID
 EU_COUNTRIES_FILE = "eu_countries.json"
@@ -120,6 +121,14 @@ class Localization:
             return f"[ERROR: Missing data for {key}]"
 l10n = Localization()
 async def get_user_lang(user_id, server_id):
+    if user_id is None:
+        logging.error("get_user_lang: user_id is None!")
+        return 'en'
+    if server_id is None:
+        logging.error("get_user_lang: server_id is None!")
+        return 'en'
+    user_id = int(user_id)
+    server_id = int(server_id)
     logging.info(f"get_user_lang called with user_id={user_id}, server_id={server_id}")
     rows_user = await execute_db("SELECT language FROM user_settings WHERE user_id=?", (user_id,), fetch=True)
     logging.info(f"DB result for user_settings: {rows_user}")
@@ -136,6 +145,16 @@ async def get_user_lang(user_id, server_id):
     logging.info("Returning default language: 'en'")
     return 'en'
 # Hilfefunktionen und Decorators
+def load_dm_blocked_users():
+    try:
+        with open(DM_BLOCKED_FILE, "r", encoding="utf-8") as f:
+            return set(json.load(f))
+    except Exception:
+        return set()
+def save_dm_blocked_users(blocked_set):
+    with open(DM_BLOCKED_FILE, "w", encoding="utf-8") as f:
+        json.dump(list(blocked_set), f)
+dm_blocked_users = load_dm_blocked_users()
 def normalize_species_name(name):
     name = re.sub(r'\s*\b(cf|sp|aff)\.?\s*', ' ', name, flags=re.IGNORECASE)
     return re.sub(r'\s+', ' ', name).strip().lower()
@@ -144,9 +163,12 @@ async def ensure_shop_data():
     if SHOP_DATA is None or asyncio.iscoroutine(SHOP_DATA):
         SHOP_DATA = await load_shop_data()
 async def get_server_channel(server_id):
+    server_id = int(server_id)
     rows = await execute_db("SELECT channel_id FROM server_settings WHERE server_id=?", (server_id,), fetch=True)
     return rows[0][0] if rows else None
 async def get_setting(server_id, channel_id):
+    server_id = int(server_id)
+    channel_id = int(channel_id)
     query = "SELECT channel_id FROM server_settings WHERE server_id=? AND channel_id=?"
     params = (server_id, channel_id)
     result = await execute_db(query, params, fetch=True)
@@ -353,6 +375,7 @@ async def split_message(text, max_length=2000):
         blocks.append(current)
     return blocks
 async def get_blacklisted_shops(user_id):
+    user_id = int(user_id)
     rows = await execute_db(
         "SELECT shop_id FROM user_shop_blacklist WHERE user_id=?",
         (user_id,),
@@ -360,6 +383,7 @@ async def get_blacklisted_shops(user_id):
     )
     return {row[0] for row in rows}
 async def get_shop_rating(shop_id):
+    shop_id = int(shop_id)
     rows = await execute_db(
         "SELECT average_rating FROM shops WHERE id = ?",
         (shop_id,),
@@ -479,7 +503,11 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False, e
     if excluded_species_list is None:
         excluded_species_list = set()
     try:
-        server_id = None
+        row = await execute_db(
+            "SELECT server_id FROM notifications WHERE user_id=? AND species=? AND regions=?",
+            (user_id, species, regions), fetch=True
+        )
+        server_id = row[0]["server_id"] if row and row[0]["server_id"] else None
         lang = await get_user_lang(user_id, server_id)
         ch_shops = []
         if ch_mode:
@@ -548,7 +576,8 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False, e
         for item in sorted_products_with_ratings:
             product = item["product_data"]
             rating_str = format_rating(item["rating"])
-            shop_info = SHOP_DATA.get(str(product["shop_id"]), {})
+            shop_id_str = str(product["shop_id"])
+            shop_info = SHOP_DATA.get(shop_id_str, {}) if SHOP_DATA and isinstance(SHOP_DATA, dict) else {}
             shop_url = shop_info.get("url", "N/A")
             message_entries.append(l10n.get(
                 'availability_entry',
@@ -605,11 +634,21 @@ async def trigger_availability_check(user_id, species, regions, ch_mode=False, e
         return None
 async def handle_dm_failure(user_id, species, regions, lang):
     try:
+        if isinstance(regions, str):
+            regions_list = [r.strip() for r in regions.split(",") if r.strip()]
+        else:
+            regions_list = regions
         servers = await execute_db("""
             SELECT DISTINCT server_id FROM server_user_mappings
             WHERE user_id=?
         """, (user_id,), fetch=True)
+
+        used_server_ids = set()
         for (server_id,) in servers:
+            used_server_ids.add(server_id)
+            key = f"{user_id}-{server_id}"
+            if key in dm_blocked_users:
+                continue
             channel_id = await get_server_channel(server_id)
             channel = bot.get_channel(channel_id) if channel_id else None
             if not channel:
@@ -620,14 +659,45 @@ async def handle_dm_failure(user_id, species, regions, lang):
                     await channel.send(
                         f"<@{user_id}>, {l10n.get('dm_failed', lang)}\n"
                         f"**Art:** {species}\n"
-                        f"**Regions:** {', '.join(regions)}"
+                        f"**Regions:** {', '.join(regions_list)}"
                     )
+                    dm_blocked_users.add(key)
+                    save_dm_blocked_users(dm_blocked_users)
                 except discord.HTTPException as e:
                     if hasattr(e, "status") and e.status == 429:
                         logging.warning(f"Rate limit in channel {server_id}: {e}")
                         await asyncio.sleep(e.retry_after)
                     else:
                         raise
+        if not used_server_ids:
+            row = await execute_db(
+                "SELECT server_id FROM notifications WHERE user_id=? AND species=? AND regions=?",
+                (user_id, species, regions), fetch=True
+            )
+            if row and row[0]["server_id"]:
+                server_id = row[0]["server_id"]
+                key = f"{user_id}-{server_id}"
+                if key not in dm_blocked_users:
+                    channel_id = await get_server_channel(server_id)
+                    channel = bot.get_channel(channel_id) if channel_id else None
+                    if not channel:
+                        guild = bot.get_guild(server_id)
+                        channel = guild.system_channel if guild else None
+                    if channel:
+                        try:
+                            await channel.send(
+                                f"<@{user_id}>, {l10n.get('dm_failed', lang)}\n"
+                                f"**Art:** {species}\n"
+                                f"**Regions:** {', '.join(regions_list)}"
+                            )
+                            dm_blocked_users.add(key)
+                            save_dm_blocked_users(dm_blocked_users)
+                        except discord.HTTPException as e:
+                            if hasattr(e, "status") and e.status == 429:
+                                logging.warning(f"Rate limit in channel {server_id}: {e}")
+                                await asyncio.sleep(e.retry_after)
+                            else:
+                                raise
     except Exception as e:
         logging.error(f"Error with DM fallback: {e}")
 async def notify_expired(user_id, species, regions, lang):
@@ -698,7 +768,12 @@ async def get_file_age(filename):
             return None, "File not found"
     return await bot.loop.run_in_executor(None, sync_task)
 async def ask_for_feedback(user, user_id, species, regions):
-    lang = await get_user_lang(user_id, None)
+    row = await execute_db(
+        "SELECT server_id FROM notifications WHERE user_id=? AND species=? AND regions=?",
+        (user_id, species, regions), fetch=True
+    )
+    server_id = row[0]["server_id"] if row and row[0]["server_id"] else None
+    lang = await get_user_lang(user_id, server_id)
     question = await user.send(
         l10n.get('feedback_question', lang)
     )
@@ -711,7 +786,6 @@ async def ask_for_feedback(user, user_id, species, regions):
         (pending_until.strftime("%Y-%m-%d %H:%M:%S"), user_id, species, regions),
         commit=True
     )
-
     def check(reaction, reactor):
         return (
             reactor.id == int(user_id)
@@ -757,7 +831,7 @@ async def ask_for_feedback(user, user_id, species, regions):
                 species=species,
                 regions=regions
             )
-            await user.send(timeout_msg)    
+            await user.send(timeout_msg)
         except:
             pass
 # Befehle
@@ -1048,7 +1122,7 @@ async def notification(
         try:
             regions_str = ",".join(valid_regions)
             user_id_str = str(ctx.author.id)
-
+            server_id = ctx.guild.id if ctx.guild else None
             existing_active = await execute_db("""
                 SELECT 1 FROM notifications
                 WHERE user_id = ? AND species = ? AND regions = ? AND status = 'active'
@@ -1057,11 +1131,11 @@ async def notification(
                  await ctx.respond(l10n.get('notification_exists_active', lang, species=search_term, regions=regions_str))
                  return
             rowcount = await execute_db("""
-                INSERT INTO notifications (user_id, species, regions, status, excluded_species)
-                VALUES (?, ?, ?, 'active', ?)
+                INSERT INTO notifications (user_id, species, regions, status, excluded_species, server_id)
+                VALUES (?, ?, ?, 'active', ?, ?)
                 ON CONFLICT(user_id, species, regions)
-                DO UPDATE SET created_at=CURRENT_TIMESTAMP, status='active', excluded_species=excluded.excluded_species
-            """, (user_id_str, search_term, regions_str, excluded_species_str), commit=True)
+                DO UPDATE SET created_at=CURRENT_TIMESTAMP, status='active', excluded_species=excluded.excluded_species, server_id = excluded.server_id
+            """, (user_id_str, search_term, regions_str, excluded_species_str, server_id), commit=True)
             logging.debug(f"DB operation rowcount: {rowcount} for user {user_id_str}, term '{search_term}', regions '{regions_str}', exclude '{excluded_species_str}'")
             response_key = 'notification_set'
             if force and not existing_active:
@@ -1508,6 +1582,29 @@ async def show(ctx):
         )
     message = l10n.get('ch_delivery_header', lang) + "\n\n" + "\n".join(entries)
     await ctx.respond(message[:2000])
+@bot.slash_command(name="reset_failed", description="Reactivates failed notifications after successful PN test")
+@allowed_channel()
+async def reset_failed(ctx):
+    user_id = str(ctx.author.id)
+    lang = await get_user_lang(ctx.author.id, ctx.guild.id if ctx.guild else None)
+    try:
+        await ctx.author.send(l10n.get('testnotification_dm', lang))
+    except discord.Forbidden:
+        await ctx.respond(l10n.get('testnotification_forbidden', lang))
+        return
+    rowcount = await execute_db(
+        "UPDATE notifications SET status='active' WHERE user_id=? AND status='failed'",
+        (user_id,),
+        commit=True
+    )
+    key_prefix = f"{user_id}-"
+    to_remove = [key for key in dm_blocked_users if key.startswith(key_prefix)]
+    for key in to_remove:
+        dm_blocked_users.remove(key)
+    save_dm_blocked_users(dm_blocked_users)
+    await ctx.respond(
+        l10n.get('reset_failed_success', lang, count=rowcount),
+    )
 # Automatisierte Aufgaben
 @tasks.loop(hours=168)
 async def optimize_db():
@@ -1597,6 +1694,15 @@ async def sync_ratings():
         logging.debug("SHOP_DATA cache reloaded successfully after combined task.")
     except Exception as e:
         logging.error(f"Error during combined shop reload and rating sync task: {e}", exc_info=True)
+@tasks.loop(hours=1)
+async def shop_data_loader():
+    global SHOP_DATA
+    try:
+        SHOP_DATA = await load_shop_data()
+        logging.info("Shop data reloaded successfully.")
+    except Exception as e:
+        logging.error(f"Error reloading shop data: {e}")
+        SHOP_DATA = {}
 @tasks.loop(minutes=10)
 async def expire_pending_feedbacks():
     now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
@@ -1697,6 +1803,8 @@ async def on_application_command_error(ctx, error):
 @bot.event
 async def on_ready():
     global EU_COUNTRY_CODES
+    global SHOP_DATA
+    SHOP_DATA = await load_shop_data()
     logging.info("Bot starting up...")
     def init_db():
         init_conn = sqlite3.connect(BASE_DIR / "antcheckbot.db")
@@ -1727,7 +1835,8 @@ async def on_ready():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 notified_at TIMESTAMP,
                 excluded_species TEXT DEFAULT NULL,
-                pending_feedback_until TIMESTAMP DEFAULT NULL
+                pending_feedback_until TIMESTAMP DEFAULT NULL,
+                server_id INTEGER
             );
             CREATE TABLE IF NOT EXISTS global_stats (
                 key TEXT PRIMARY KEY,
@@ -1806,6 +1915,7 @@ async def on_ready():
     logging.info("Starting background tasks...")
     try:
         if 'clean_old_notifications' in globals() and isinstance(clean_old_notifications, tasks.Loop): clean_old_notifications.start()
+        if 'shop_data_loader' in globals() and isinstance(shop_data_loader, tasks.Loop): shop_data_loader.start()
         if 'check_availability' in globals() and isinstance(check_availability, tasks.Loop): check_availability.start()
         if 'update_bot_status' in globals() and isinstance(update_bot_status, tasks.Loop): update_bot_status.start()
         if 'optimize_db' in globals() and isinstance(optimize_db, tasks.Loop): optimize_db.start()
